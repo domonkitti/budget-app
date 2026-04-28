@@ -1,4 +1,4 @@
-import type { FlatProject, SummaryRow } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -10,7 +10,7 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
   return res.json()
 }
 
-import type { TagCategory, TagValue, SubJobTag, TagSummaryRow, SubJobTagInput } from "./types"
+import type { ProjectTag, TagCategory, TagValue, SubJobTag, TagSummaryRow, SubJobTagInput } from "./types"
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
@@ -32,12 +32,27 @@ async function put(path: string, body: unknown): Promise<void> {
   if (!res.ok) throw new Error(await res.text())
 }
 
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 async function del(path: string): Promise<void> {
   const res = await fetch(BASE + path, { method: "DELETE" })
   if (!res.ok) throw new Error(await res.text())
 }
 
 export const api = {
+  projects: (params?: Record<string, string>) =>
+    get<Project[]>("/projects", params),
+  projectDetail: (code: string) =>
+    get<ProjectDetail>(`/projects/${code}`),
+  filterOptions: () => get<FilterOptions>("/filter-options"),
   flatProjects: (params?: Record<string, string>) =>
     get<FlatProject[]>("/projects/flat", params),
 
@@ -53,9 +68,21 @@ export const api = {
   tagValues: (catID: number) => get<TagValue[]>(`/tag-categories/${catID}/values`),
   createValue: (catID: number, code: string) =>
     post<TagValue>(`/tag-categories/${catID}/values`, { code }),
+  updateValue: (id: number, code: string) => putJson<TagValue>(`/tag-values/${id}`, { code }),
   deleteValue: (id: number) => del(`/tag-values/${id}`),
 
   // Sub-job tags
+  projectTags: (projectId: number) =>
+    get<ProjectTag[]>("/project-tags", {
+      project_id: String(projectId),
+    }),
+  setProjectTags: (projectId: number, categoryId: number, tags: SubJobTagInput[]) =>
+    put("/project-tags", {
+      project_id: projectId,
+      category_id: categoryId,
+      tags,
+    }),
+
   subJobTags: (projectId: number, subJobName: string) =>
     get<SubJobTag[]>("/sub-job-tags", {
       project_id: String(projectId),
@@ -72,4 +99,42 @@ export const api = {
   // Tag summary
   summaryByTag: (category: string, params?: Record<string, string>) =>
     get<TagSummaryRow[]>("/summary/by-tag", { category, ...params }),
+
+  // Category allocation aliases used by the UI.
+  categories: () => get<TagCategory[]>("/tag-categories"),
+  createAllocationCategory: (name: string) => post<TagCategory>("/tag-categories", { name }),
+  deleteAllocationCategory: (id: number) => del(`/tag-categories/${id}`),
+  categoryValues: (catID: number) => get<TagValue[]>(`/tag-categories/${catID}/values`),
+  createCategoryValue: (catID: number, code: string) =>
+    post<TagValue>(`/tag-categories/${catID}/values`, { code }),
+  updateCategoryValue: (id: number, code: string) => putJson<TagValue>(`/tag-values/${id}`, { code }),
+  deleteCategoryValue: (id: number) => del(`/tag-values/${id}`),
+  projectCategoryAllocations: (projectId: number) =>
+    get<ProjectTag[]>("/project-tags", {
+      project_id: String(projectId),
+    }),
+  setProjectCategoryAllocations: (projectId: number, categoryId: number, allocations: SubJobTagInput[]) =>
+    put("/project-tags", {
+      project_id: projectId,
+      category_id: categoryId,
+      tags: allocations,
+    }),
+  jobCategoryAllocations: (projectId: number, subJobName: string) =>
+    get<SubJobTag[]>("/sub-job-tags", {
+      project_id: String(projectId),
+      sub_job_name: subJobName,
+    }),
+  setJobCategoryAllocations: (projectId: number, subJobName: string, categoryId: number, allocations: SubJobTagInput[]) =>
+    put("/sub-job-tags", {
+      project_id: projectId,
+      sub_job_name: subJobName,
+      category_id: categoryId,
+      tags: allocations,
+    }),
+  categorySummary: (category: string, params?: Record<string, string>) =>
+    get<TagSummaryRow[]>("/summary/by-tag", { category, ...params }),
+  allocationSelections: (categoryId: number) =>
+    get<CategoryAllocationSelection[]>("/allocation-selections", { category_id: String(categoryId) }),
+  setAllocationSelections: (categoryId: number, selections: CategoryAllocationSelection[]) =>
+    put("/allocation-selections", { category_id: categoryId, selections }),
 }

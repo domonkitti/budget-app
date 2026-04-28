@@ -1,247 +1,553 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  flexRender,
-  createColumnHelper,
-  type SortingState,
-  type VisibilityState,
-  type ColumnFiltersState,
-} from "@tanstack/react-table"
-import type { FlatProject } from "@/lib/types"
+import { Fragment, useMemo, useState } from "react"
+import type { FlatProject, SourceYearEntry, SubJobYearEntry } from "@/lib/types"
 
-const helper = createColumnHelper<FlatProject>()
+const FUND_COLUMNS = [
+  { key: "committed", label: "ผูกพัน", fundType: "ผูกพัน" as const },
+  { key: "invest", label: "ลงทุน", fundType: "ลงทุน" as const },
+  { key: "total", label: "รวม", fundType: null },
+] as const
+const GROUPS = [
+  { key: "Budget", label: "งบเงินดำเนินการปี" },
+  { key: "Target", label: "เป้าหมายการเบิกจ่ายปี" },
+  { key: "Remain", label: "คงเหลือ" },
+] as const
+
+type Group = typeof GROUPS[number]["key"]
+type FundType = "ผูกพัน" | "ลงทุน"
+type FundColumnKey = typeof FUND_COLUMNS[number]["key"]
+type SortDir = "asc" | "desc"
+type NumericFilter = { min: string; max: string }
+type MoneySortState = { kind: "money"; year: number; group: Group; fundKey: FundColumnKey; dir: SortDir }
+type YearSortState = { kind: "year"; dir: SortDir }
+type SortState = MoneySortState | YearSortState | null
 
 function fmt(n: number) {
-  return n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (n === 0) return <span className="text-gray-700">-</span>
+  return n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 }
 
-function SortIcon({ dir }: { dir: false | "asc" | "desc" }) {
-  if (!dir) return <span className="text-gray-300 ml-1">↕</span>
-  return <span className="text-blue-500 ml-1">{dir === "asc" ? "↑" : "↓"}</span>
+function metricValue(entry: Pick<SourceYearEntry, "budget" | "target" | "remain">, group: Group): number {
+  return group === "Budget" ? entry.budget : group === "Target" ? entry.target : entry.remain
 }
 
-function MinMaxFilter({ value, onChange }: {
-  value: [number, number]
-  onChange: (v: [number, number]) => void
-}) {
-  return (
-    <div className="flex gap-1 mt-1">
-      <input
-        type="number"
-        placeholder="min"
-        className="w-20 text-xs border rounded px-1 py-0.5"
-        value={value[0] === 0 ? "" : value[0]}
-        onChange={e => onChange([Number(e.target.value) || 0, value[1]])}
-      />
-      <input
-        type="number"
-        placeholder="max"
-        className="w-20 text-xs border rounded px-1 py-0.5"
-        value={value[1] === Infinity ? "" : value[1]}
-        onChange={e => onChange([value[0], Number(e.target.value) || Infinity])}
-      />
-    </div>
-  )
+function getVal(
+  breakdown: SourceYearEntry[],
+  year: number,
+  source: string | null,
+  fundType: FundType | null,
+  group: Group,
+): number {
+  return breakdown.reduce((sum, entry) => {
+    if (entry.year !== year) return sum
+    if (source !== null && entry.source !== source) return sum
+    if (fundType !== null && entry.fund_type !== fundType) return sum
+    return sum + metricValue(entry, group)
+  }, 0)
 }
 
-type NumFilter = { budget: [number, number]; target: [number, number]; remain: [number, number] }
+function getSubJobVal(
+  subJobs: SubJobYearEntry[],
+  name: string | null,
+  year: number,
+  fundType: FundType | null,
+  group: Group,
+): number {
+  return subJobs.reduce((sum, entry) => {
+    if (entry.year !== year) return sum
+    if (name !== null && entry.name !== name) return sum
+    if (fundType !== null && entry.fund_type !== fundType) return sum
+    return sum + metricValue(entry, group)
+  }, 0)
+}
 
-const COLS = [
-  { key: "project_code", label: "Code" },
-  { key: "division", label: "Division" },
-  { key: "project_type", label: "Type" },
-  { key: "year", label: "Year" },
-]
+function subJobRank(a: { sort_order: number | null; name: string }, b: { sort_order: number | null; name: string }) {
+  const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER
+  const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER
+  return ao - bo || a.name.localeCompare(b.name, "th")
+}
+
+function sourceRank(source: string) {
+  const order = ["เงินกู้", "เงินกู้ในประเทศ", "เงินรายได้ กฟภ.", "เงินสมทบผู้ใช้ไฟ", "เงินสมทบจากผู้ใช้ไฟ"]
+  const idx = order.indexOf(source)
+  return idx === -1 ? order.length : idx
+}
+
+function filterKey(year: number, group: Group, fundKey: FundColumnKey) {
+  return `${year}-${group}-${fundKey}`
+}
+
+function parseFilterValue(value: string) {
+  const cleaned = value.replace(/,/g, "").trim()
+  if (!cleaned) return null
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) ? parsed : null
+}
 
 type Props = {
   data: FlatProject[]
-  onSelectSubJob?: (projectId: number, projectCode: string, subJobName: string) => void
+  years: number[]
 }
 
-export default function BudgetTable({ data, onSelectSubJob }: Props) {
-  const [sorting, setSorting] = useState<SortingState>([])
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
-  const [visibility, setVisibility] = useState<VisibilityState>({ project_type: false, year: false })
-  const [textFilters, setTextFilters] = useState({ code: "", name: "", division: "" })
-  const [numFilters, setNumFilters] = useState<NumFilter>({
-    budget: [0, Infinity],
-    target: [0, Infinity],
-    remain: [0, Infinity],
+export default function BudgetTable({ data, years }: Props) {
+  const [textFilters, setTextFilters] = useState({ name: "", code: "", division: "", type: "" })
+  const [numFilters, setNumFilters] = useState<Record<string, NumericFilter>>({})
+  const [yearFilter, setYearFilter] = useState<NumericFilter>({ min: "", max: "" })
+  const [sortState, setSortState] = useState<SortState>(null)
+  const [showJobs, setShowJobs] = useState(true)
+  const [showSources, setShowSources] = useState(true)
+  const [infoVis, setInfoVis] = useState({ code: false, division: false, type: false, year: false })
+  const [groupVis, setGroupVis] = useState<Record<Group, boolean>>({
+    Budget: true,
+    Target: true,
+    Remain: true,
   })
-  const [groupSort, setGroupSort] = useState<Record<string, false | "asc" | "desc">>({
-    budget: false, target: false, remain: false,
+  const [fundVis, setFundVis] = useState<Record<FundColumnKey, boolean>>({
+    committed: true,
+    invest: true,
+    total: true,
   })
 
-  const filtered = useMemo(() => data.filter(r => {
-    if (textFilters.code && !r.project_code.toLowerCase().includes(textFilters.code.toLowerCase())) return false
-    if (textFilters.name && !r.name.toLowerCase().includes(textFilters.name.toLowerCase())) return false
-    if (textFilters.division && !(r.division ?? "").toLowerCase().includes(textFilters.division.toLowerCase())) return false
-    if (r.budget_total < numFilters.budget[0] || r.budget_total > numFilters.budget[1]) return false
-    if (r.target_total < numFilters.target[0] || r.target_total > numFilters.target[1]) return false
-    if (r.remain_total < numFilters.remain[0] || r.remain_total > numFilters.remain[1]) return false
-    return true
-  }), [data, textFilters, numFilters])
+  const displayYears = useMemo(
+    () => years.length > 0 ? years : [...new Set(data.flatMap(row => row.source_breakdown.map(entry => entry.year)))].sort(),
+    [data, years],
+  )
+  const visibleGroups = GROUPS.filter(group => groupVis[group.key])
+  const visibleFunds = FUND_COLUMNS.filter(column => fundVis[column.key])
+  const leftColSpan = 2 + Number(infoVis.code) + Number(infoVis.division) + Number(infoVis.type) + Number(infoVis.year)
+  const hasMoneyColumns = visibleGroups.length > 0 && visibleFunds.length > 0
+
+  const sources = useMemo(() => {
+    const set = new Set<string>()
+    data.forEach(row => row.source_breakdown.forEach(entry => set.add(entry.source)))
+    return [...set].sort((a, b) => sourceRank(a) - sourceRank(b) || a.localeCompare(b, "th"))
+  }, [data])
+
+  function getSubJobRows(row: FlatProject) {
+    const byName = new Map<string, { name: string; sort_order: number | null }>()
+    const subJobs = row.sub_jobs ?? []
+    subJobs.forEach(entry => {
+      const existing = byName.get(entry.name)
+      if (!existing || subJobRank(entry, existing) < 0) {
+        byName.set(entry.name, { name: entry.name, sort_order: entry.sort_order })
+      }
+    })
+    return [...byName.values()].sort(subJobRank)
+  }
+
+  const filtered = useMemo(() => {
+    const numericColumns = displayYears.flatMap(year =>
+      visibleGroups.flatMap(group =>
+        visibleFunds.map(column => ({
+          year,
+          group: group.key,
+          fundType: column.fundType,
+          filter: numFilters[filterKey(year, group.key, column.key)],
+        })),
+      ),
+    )
+    const yearMin = parseFilterValue(yearFilter.min)
+    const yearMax = parseFilterValue(yearFilter.max)
+
+    return data.filter(row => {
+      if (textFilters.name && !row.name.toLowerCase().includes(textFilters.name.toLowerCase())) return false
+      if (textFilters.code && !row.project_code.toLowerCase().includes(textFilters.code.toLowerCase())) return false
+      if (textFilters.division && !(row.division ?? "").toLowerCase().includes(textFilters.division.toLowerCase())) return false
+      if (textFilters.type && row.project_type.toLowerCase() !== textFilters.type.toLowerCase()) return false
+      if (yearMin !== null && row.year < yearMin) return false
+      if (yearMax !== null && row.year > yearMax) return false
+
+      return numericColumns.every(column => {
+        const min = parseFilterValue(column.filter?.min ?? "")
+        const max = parseFilterValue(column.filter?.max ?? "")
+        if (min === null && max === null) return true
+        const value = getVal(row.source_breakdown, column.year, null, column.fundType, column.group)
+        if (min !== null && value < min) return false
+        if (max !== null && value > max) return false
+        return true
+      })
+    })
+  }, [data, displayYears, numFilters, textFilters, visibleFunds, visibleGroups, yearFilter])
 
   const sorted = useMemo(() => {
-    const active = Object.entries(groupSort).find(([, v]) => v !== false)
-    if (!active) return filtered
-    const [key, dir] = active
+    if (!sortState) return filtered
+
+    if (sortState.kind === "year") {
+      return [...filtered].sort((a, b) => sortState.dir === "asc" ? a.year - b.year : b.year - a.year)
+    }
+
+    const groupVisible = groupVis[sortState.group]
+    const fundColumn = FUND_COLUMNS.find(column => column.key === sortState.fundKey)
+    if (!groupVisible || !fundColumn || !fundVis[sortState.fundKey]) return filtered
+
     return [...filtered].sort((a, b) => {
-      const ka = `${key}_total` as keyof FlatProject
-      const va = a[ka] as number
-      const vb = b[ka] as number
-      return dir === "asc" ? va - vb : vb - va
+      const av = getVal(a.source_breakdown, sortState.year, null, fundColumn.fundType, sortState.group)
+      const bv = getVal(b.source_breakdown, sortState.year, null, fundColumn.fundType, sortState.group)
+      return sortState.dir === "asc" ? av - bv : bv - av
     })
-  }, [filtered, groupSort])
+  }, [filtered, fundVis, groupVis, sortState])
 
-  const columns = useMemo(() => [
-    helper.accessor("project_code", { header: "Code", id: "project_code" }),
-    helper.accessor("name", { header: "Name", id: "name" }),
-    helper.accessor("division", { header: "Division", id: "division", cell: i => i.getValue() ?? "—" }),
-    helper.accessor("project_type", { header: "Type", id: "project_type" }),
-    helper.accessor("year", { header: "Year", id: "year" }),
-    helper.accessor("budget_committed", { header: "ผูกพัน", id: "budget_committed", cell: i => fmt(i.getValue()) }),
-    helper.accessor("budget_invest", { header: "ลงทุน", id: "budget_invest", cell: i => fmt(i.getValue()) }),
-    helper.accessor("target_committed", { header: "ผูกพัน", id: "target_committed", cell: i => fmt(i.getValue()) }),
-    helper.accessor("target_invest", { header: "ลงทุน", id: "target_invest", cell: i => fmt(i.getValue()) }),
-    helper.accessor("remain_committed", { header: "ผูกพัน", id: "remain_committed", cell: i => fmt(i.getValue()) }),
-    helper.accessor("remain_invest", { header: "ลงทุน", id: "remain_invest", cell: i => fmt(i.getValue()) }),
-  ], [])
-
-  const table = useReactTable({
-    data: sorted,
-    columns,
-    state: { sorting, columnFilters, columnVisibility: visibility },
-    onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    onColumnVisibilityChange: setVisibility,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    manualSorting: true,
-    manualFiltering: true,
-  })
-
-  function cycleSort(key: string) {
-    setGroupSort(prev => {
-      const next = { budget: false, target: false, remain: false } as typeof prev
-      const cur = prev[key]
-      next[key] = cur === false ? "asc" : cur === "asc" ? "desc" : false
-      return next
+  function cycleMoneySort(year: number, group: Group, fundKey: FundColumnKey) {
+    setSortState(current => {
+      if (
+        !current ||
+        current.kind !== "money" ||
+        current.year !== year ||
+        current.group !== group ||
+        current.fundKey !== fundKey
+      ) {
+        return { kind: "money", year, group, fundKey, dir: "asc" }
+      }
+      if (current.dir === "asc") return { ...current, dir: "desc" }
+      return null
     })
   }
 
-  const groups = [
-    { id: "budget", label: "Budget", cols: ["budget_committed", "budget_invest"] },
-    { id: "target", label: "Target", cols: ["target_committed", "target_invest"] },
-    { id: "remain", label: "Remain", cols: ["remain_committed", "remain_invest"] },
-  ]
+  function cycleYearSort() {
+    setSortState(current => {
+      if (!current || current.kind !== "year") return { kind: "year", dir: "asc" }
+      if (current.dir === "asc") return { kind: "year", dir: "desc" }
+      return null
+    })
+  }
 
-  const infoCols = ["project_code", "name", "division", "project_type", "year"].filter(
-    id => visibility[id] !== false
-  )
+  function updateNumFilter(year: number, group: Group, fundKey: FundColumnKey, part: keyof NumericFilter, value: string) {
+    const key = filterKey(year, group, fundKey)
+    setNumFilters(current => ({
+      ...current,
+      [key]: { ...(current[key] ?? { min: "", max: "" }), [part]: value },
+    }))
+  }
+
+  function moneySortIcon(year: number, group: Group, fundKey: FundColumnKey) {
+    if (
+      !sortState ||
+      sortState.kind !== "money" ||
+      sortState.year !== year ||
+      sortState.group !== group ||
+      sortState.fundKey !== fundKey
+    ) return "↕"
+    return sortState.dir === "asc" ? "↑" : "↓"
+  }
+
+  function yearSortIcon() {
+    if (!sortState || sortState.kind !== "year") return "↕"
+    return sortState.dir === "asc" ? "↑" : "↓"
+  }
+
+  const cellClass = "border border-black px-2 py-1 text-right tabular-nums whitespace-nowrap"
+  const headClass = "border border-black px-2 py-1 text-center font-semibold whitespace-nowrap"
+  const infoHeadClass = "border border-black px-2 py-1 text-center font-semibold"
+  const filterInputClass = "min-w-0 border border-gray-300 px-1 py-0.5 text-[11px] font-normal"
 
   return (
-    <div className="bg-white rounded-xl border overflow-x-auto">
-      {/* Column picker */}
-      <div className="flex flex-wrap gap-2 p-3 border-b bg-gray-50 text-sm">
-        <span className="text-gray-500 font-medium self-center">Columns:</span>
-        {COLS.map(({ key, label }) => (
-          <label key={key} className="flex items-center gap-1 cursor-pointer">
+    <div className="bg-white border border-gray-300">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-2.5 border-b bg-gray-50">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Info</span>
+          {([
+            { key: "code" as const, label: "Code" },
+            { key: "division" as const, label: "Division" },
+            { key: "type" as const, label: "Type" },
+            { key: "year" as const, label: "Start year" },
+          ]).map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-1 cursor-pointer text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={infoVis[key]}
+                onChange={event => setInfoVis(value => ({ ...value, [key]: event.target.checked }))}
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+        <div className="w-px bg-gray-200 self-stretch" />
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Groups</span>
+          {GROUPS.map(group => (
+            <label key={group.key} className="flex items-center gap-1 cursor-pointer text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={groupVis[group.key]}
+                onChange={event => setGroupVis(value => ({ ...value, [group.key]: event.target.checked }))}
+              />
+              {group.key}
+            </label>
+          ))}
+        </div>
+        <div className="w-px bg-gray-200 self-stretch" />
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Columns</span>
+          {FUND_COLUMNS.map(column => (
+            <label key={column.key} className="flex items-center gap-1 cursor-pointer text-xs text-gray-600">
+              <input
+                type="checkbox"
+                checked={fundVis[column.key]}
+                onChange={event => setFundVis(value => ({ ...value, [column.key]: event.target.checked }))}
+              />
+              {column.label}
+            </label>
+          ))}
+          <label className="flex items-center gap-1 cursor-pointer text-xs text-gray-600">
             <input
               type="checkbox"
-              checked={visibility[key] !== false}
-              onChange={e => setVisibility(v => ({ ...v, [key]: e.target.checked }))}
+              checked={showJobs}
+              onChange={event => setShowJobs(event.target.checked)}
             />
-            {label}
+            Job rows
           </label>
-        ))}
+          <label className="flex items-center gap-1 cursor-pointer text-xs text-gray-600">
+            <input
+              type="checkbox"
+              checked={showSources}
+              onChange={event => setShowSources(event.target.checked)}
+            />
+            Source rows
+          </label>
+        </div>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse">
+        <table className="w-full min-w-max border-collapse text-xs text-gray-900">
           <thead>
-            {/* Row 1: group headers */}
-            <tr className="bg-gray-100 border-b">
-              {infoCols.map(id => (
-                <th key={id} rowSpan={3} className="px-3 py-2 text-left font-semibold text-gray-700 border-r align-top">
-                  <div>{id === "project_code" ? "Code" : id === "project_type" ? "Type" : id.charAt(0).toUpperCase() + id.slice(1)}</div>
-                  {["project_code", "name", "division"].includes(id) && (
-                    <input
-                      className="mt-1 w-full text-xs border rounded px-1 py-0.5 font-normal"
-                      placeholder="search..."
-                      value={textFilters[id === "project_code" ? "code" : id as keyof typeof textFilters]}
-                      onChange={e => setTextFilters(f => ({
-                        ...f, [id === "project_code" ? "code" : id]: e.target.value
-                      }))}
-                    />
-                  )}
-                </th>
-              ))}
-              {groups.map(g => (
-                <th key={g.id} colSpan={2} className="px-3 py-2 text-center font-semibold text-gray-700 border-r cursor-pointer select-none"
-                  onClick={() => cycleSort(g.id)}>
-                  {g.label} <SortIcon dir={groupSort[g.id]} />
-                </th>
+            <tr>
+              <th colSpan={leftColSpan} className={`${infoHeadClass} min-w-[440px]`}>
+                Info
+              </th>
+              {hasMoneyColumns && displayYears.map(year => (
+                <Fragment key={year}>
+                  {visibleGroups.map(group => (
+                    <th key={`${year}-${group.key}`} colSpan={visibleFunds.length} className={headClass}>
+                      {group.key === "Remain" ? group.label : `${group.label} ${year}`}
+                    </th>
+                  ))}
+                </Fragment>
               ))}
             </tr>
-            {/* Row 2: sub-column headers */}
-            <tr className="bg-gray-50 border-b">
-              {groups.flatMap(g => g.cols.map((col, i) => (
-                <th key={col} className={`px-3 py-1 text-center text-xs text-gray-500 font-medium ${i === 1 ? "border-r" : ""}`}>
-                  {col.endsWith("committed") ? "ผูกพัน" : "ลงทุน"}
+            <tr>
+              <th className={`${infoHeadClass} w-[44px]`}>ข้อ</th>
+              <th className={`${infoHeadClass} min-w-[360px]`}>รายการ</th>
+              {infoVis.code && <th className={`${infoHeadClass} min-w-[110px]`}>Code</th>}
+              {infoVis.division && <th className={`${infoHeadClass} min-w-[120px]`}>Division</th>}
+              {infoVis.type && <th className={`${infoHeadClass} w-[44px]`}>Type</th>}
+              {infoVis.year && (
+                <th className={`${infoHeadClass} min-w-[112px]`}>
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center justify-center gap-1"
+                    onClick={cycleYearSort}
+                    title="Sort start year"
+                  >
+                    <span>Start year</span>
+                    <span className="text-[10px] text-gray-500">{yearSortIcon()}</span>
+                  </button>
                 </th>
-              )))}
+              )}
+              {hasMoneyColumns && displayYears.map(year => (
+                <Fragment key={year}>
+                  {visibleGroups.map(group => (
+                    <Fragment key={`${year}-${group.key}-funds`}>
+                      {visibleFunds.map(column => (
+                        <th key={`${year}-${group.key}-${column.key}`} className={headClass}>
+                          <button
+                            type="button"
+                            className="inline-flex w-full items-center justify-center gap-1"
+                            onClick={() => cycleMoneySort(year, group.key, column.key)}
+                            title="Sort"
+                          >
+                            <span>{column.label}</span>
+                            <span className="text-[10px] text-gray-500">{moneySortIcon(year, group.key, column.key)}</span>
+                          </button>
+                        </th>
+                      ))}
+                    </Fragment>
+                  ))}
+                </Fragment>
+              ))}
             </tr>
-            {/* Row 3: numeric filter row only */}
-            <tr className="bg-white border-b">
-              {groups.map(g => (
-                <td key={g.id} colSpan={2} className="px-2 py-1 border-r">
-                  <MinMaxFilter
-                    value={numFilters[g.id as keyof NumFilter]}
-                    onChange={v => setNumFilters(f => ({ ...f, [g.id]: v }))}
+            <tr>
+              <th className="border border-black px-1 py-1" />
+              <th className="border border-black px-1 py-1">
+                <input
+                  className="w-full min-w-[260px] border border-gray-300 px-1 py-0.5 text-xs font-normal"
+                  placeholder="search..."
+                  value={textFilters.name}
+                  onChange={event => setTextFilters(value => ({ ...value, name: event.target.value }))}
+                />
+              </th>
+              {infoVis.code && (
+                <th className="border border-black px-1 py-1">
+                  <input
+                    className="w-full min-w-[90px] border border-gray-300 px-1 py-0.5 text-xs font-normal"
+                    placeholder="code..."
+                    value={textFilters.code}
+                    onChange={event => setTextFilters(value => ({ ...value, code: event.target.value }))}
                   />
-                </td>
+                </th>
+              )}
+              {infoVis.division && (
+                <th className="border border-black px-1 py-1">
+                  <input
+                    className="w-full min-w-[90px] border border-gray-300 px-1 py-0.5 text-xs font-normal"
+                    placeholder="division..."
+                    value={textFilters.division}
+                    onChange={event => setTextFilters(value => ({ ...value, division: event.target.value }))}
+                  />
+                </th>
+              )}
+              {infoVis.type && (
+                <th className="border border-black px-1 py-1">
+                  <input
+                    className="w-[32px] border border-gray-300 px-1 py-0.5 text-center text-xs font-normal uppercase"
+                    maxLength={1}
+                    placeholder="Y"
+                    value={textFilters.type}
+                    onChange={event => setTextFilters(value => ({ ...value, type: event.target.value.trim().slice(0, 1) }))}
+                  />
+                </th>
+              )}
+              {infoVis.year && (
+                <th className="border border-black px-1 py-1">
+                  <div className="grid w-[112px] grid-cols-2 gap-1">
+                    <input
+                      className={filterInputClass}
+                      inputMode="numeric"
+                      placeholder="min"
+                      value={yearFilter.min}
+                      onChange={event => setYearFilter(value => ({ ...value, min: event.target.value }))}
+                    />
+                    <input
+                      className={filterInputClass}
+                      inputMode="numeric"
+                      placeholder="max"
+                      value={yearFilter.max}
+                      onChange={event => setYearFilter(value => ({ ...value, max: event.target.value }))}
+                    />
+                  </div>
+                </th>
+              )}
+              {hasMoneyColumns && displayYears.map(year => (
+                <Fragment key={year}>
+                  {visibleGroups.map(group => (
+                    <Fragment key={`${year}-${group.key}-filters`}>
+                      {visibleFunds.map(column => {
+                        const current = numFilters[filterKey(year, group.key, column.key)] ?? { min: "", max: "" }
+                        return (
+                          <th key={`${year}-${group.key}-${column.key}-filter`} className="border border-black px-1 py-1">
+                            <div className="grid w-[112px] grid-cols-2 gap-1">
+                              <input
+                                className={filterInputClass}
+                                inputMode="decimal"
+                                placeholder="min"
+                                value={current.min}
+                                onChange={event => updateNumFilter(year, group.key, column.key, "min", event.target.value)}
+                              />
+                              <input
+                                className={filterInputClass}
+                                inputMode="decimal"
+                                placeholder="max"
+                                value={current.max}
+                                onChange={event => updateNumFilter(year, group.key, column.key, "max", event.target.value)}
+                              />
+                            </div>
+                          </th>
+                        )
+                      })}
+                    </Fragment>
+                  ))}
+                </Fragment>
               ))}
             </tr>
           </thead>
+
           <tbody>
             {sorted.length === 0 ? (
               <tr>
-                <td colSpan={infoCols.length + 6} className="text-center py-12 text-gray-400">
-                  No data — import Excel file to get started
-                </td>
+                <td colSpan={99} className="border border-black py-8 text-center text-gray-500">No data</td>
               </tr>
             ) : (
-              sorted.map((row, i) => (
-                <tr
-                  key={row.project_code}
-                  className={`${i % 2 === 0 ? "bg-white" : "bg-gray-50"} ${onSelectSubJob ? "cursor-pointer hover:bg-blue-50" : ""}`}
-                  onClick={() => onSelectSubJob?.(row.id, row.project_code, row.name)}
-                >
-                  {visibility["project_code"] !== false && <td className="px-3 py-2 border-r font-mono text-xs">{row.project_code}</td>}
-                  {visibility["name"] !== false && <td className="px-3 py-2 border-r">{row.name}</td>}
-                  {visibility["division"] !== false && <td className="px-3 py-2 border-r text-center">{row.division ?? "—"}</td>}
-                  {visibility["project_type"] !== false && <td className="px-3 py-2 border-r text-center">{row.project_type}</td>}
-                  {visibility["year"] !== false && <td className="px-3 py-2 border-r text-center">{row.year}</td>}
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(row.budget_committed)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums border-r">{fmt(row.budget_invest)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(row.target_committed)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums border-r">{fmt(row.target_invest)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{fmt(row.remain_committed)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums border-r">{fmt(row.remain_invest)}</td>
-                </tr>
+              sorted.map(row => (
+                <Fragment key={row.project_code}>
+                  <tr>
+                    <td className="border border-black px-2 py-1 text-center align-top">{row.item_no ?? ""}</td>
+                    <td className="border border-black px-2 py-1 align-top min-w-[360px]">{row.name}</td>
+                    {infoVis.code && <td className="border border-black px-2 py-1 align-top font-mono">{row.project_code}</td>}
+                    {infoVis.division && <td className="border border-black px-2 py-1 align-top">{row.division ?? "-"}</td>}
+                    {infoVis.type && <td className="border border-black px-2 py-1 text-center align-top">{row.project_type}</td>}
+                    {infoVis.year && <td className="border border-black px-2 py-1 text-center align-top">{row.year}</td>}
+                    {hasMoneyColumns && displayYears.map(year => (
+                      <Fragment key={year}>
+                        {visibleGroups.map(group => (
+                          <Fragment key={`${row.project_code}-${year}-${group.key}`}>
+                            {visibleFunds.map(column => (
+                              <td key={column.key} className={cellClass}>
+                                {fmt(getVal(row.source_breakdown, year, null, column.fundType, group.key))}
+                              </td>
+                            ))}
+                          </Fragment>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </tr>
+
+                  {showJobs && getSubJobRows(row).map((subJob, index) => (
+                    <tr key={`${row.project_code}-sub-job-${subJob.name}`}>
+                      <td className="border border-black px-2 py-1" />
+                      <td className="border border-black px-2 py-1 pl-6 align-top">
+                        {index + 1}. {subJob.name}
+                      </td>
+                      {infoVis.code && <td className="border border-black px-2 py-1" />}
+                      {infoVis.division && <td className="border border-black px-2 py-1" />}
+                      {infoVis.type && <td className="border border-black px-2 py-1" />}
+                      {infoVis.year && <td className="border border-black px-2 py-1" />}
+                      {hasMoneyColumns && displayYears.map(year => (
+                        <Fragment key={year}>
+                          {visibleGroups.map(group => (
+                            <Fragment key={`${row.project_code}-${subJob.name}-${year}-${group.key}`}>
+                              {visibleFunds.map(column => (
+                                <td key={column.key} className={cellClass}>
+                                  {fmt(getSubJobVal(row.sub_jobs ?? [], subJob.name, year, column.fundType, group.key))}
+                                </td>
+                              ))}
+                            </Fragment>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tr>
+                  ))}
+
+                  {showSources && sources.map(source => (
+                    <tr key={`${row.project_code}-${source}`}>
+                      <td className="border border-black px-2 py-1" />
+                      <td className="border border-black px-2 py-1 pl-6 align-top">- {source}</td>
+                      {infoVis.code && <td className="border border-black px-2 py-1" />}
+                      {infoVis.division && <td className="border border-black px-2 py-1" />}
+                      {infoVis.type && <td className="border border-black px-2 py-1" />}
+                      {infoVis.year && <td className="border border-black px-2 py-1" />}
+                      {hasMoneyColumns && displayYears.map(year => (
+                        <Fragment key={year}>
+                          {visibleGroups.map(group => (
+                            <Fragment key={`${row.project_code}-${source}-${year}-${group.key}`}>
+                              {visibleFunds.map(column => (
+                                <td key={column.key} className={cellClass}>
+                                  {fmt(getVal(row.source_breakdown, year, source, column.fundType, group.key))}
+                                </td>
+                              ))}
+                            </Fragment>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tr>
+                  ))}
+                </Fragment>
               ))
             )}
           </tbody>
         </table>
       </div>
-      <div className="px-3 py-2 border-t text-xs text-gray-400">
+
+      <div className="px-4 py-2 border-t text-xs text-gray-500">
         {sorted.length} of {data.length} rows
       </div>
     </div>

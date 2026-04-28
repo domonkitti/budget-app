@@ -9,21 +9,31 @@ function fmt(n: number) {
   return (n / 1e6).toFixed(1) + "M"
 }
 
+function projectSum(p: FlatProject) {
+  return p.source_breakdown.reduce(
+    (acc, e) => ({ budget: acc.budget + e.budget, target: acc.target + e.target, remain: acc.remain + e.remain }),
+    { budget: 0, target: 0, remain: 0 }
+  )
+}
+
 type Props = { data: FlatProject[] }
 
 export default function SummaryCharts({ data }: Props) {
-  const total = {
-    budget: data.reduce((s, r) => s + r.budget_total, 0),
-    target: data.reduce((s, r) => s + r.target_total, 0),
-    remain: data.reduce((s, r) => s + r.remain_total, 0),
-  }
+  const total = data.reduce(
+    (acc, p) => {
+      const s = projectSum(p)
+      return { budget: acc.budget + s.budget, target: acc.target + s.target, remain: acc.remain + s.remain }
+    },
+    { budget: 0, target: 0, remain: 0 }
+  )
 
   const byDivision = Object.values(
-    data.reduce<Record<string, { name: string; budget: number; target: number }>>((acc, r) => {
-      const key = r.division ?? "N/A"
+    data.reduce<Record<string, { name: string; budget: number; target: number }>>((acc, p) => {
+      const key = p.division ?? "N/A"
       if (!acc[key]) acc[key] = { name: key, budget: 0, target: 0 }
-      acc[key].budget += r.budget_total
-      acc[key].target += r.target_total
+      const s = projectSum(p)
+      acc[key].budget += s.budget
+      acc[key].target += s.target
       return acc
     }, {})
   ).sort((a, b) => b.budget - a.budget).slice(0, 8)
@@ -35,7 +45,6 @@ export default function SummaryCharts({ data }: Props) {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-      {/* Totals */}
       <div className="bg-white rounded-xl border p-4 flex flex-col gap-3">
         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Overview</h3>
         {[
@@ -50,7 +59,6 @@ export default function SummaryCharts({ data }: Props) {
         ))}
       </div>
 
-      {/* By Division */}
       <div className="bg-white rounded-xl border p-4">
         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">By Division</h3>
         <ResponsiveContainer width="100%" height={150}>
@@ -64,15 +72,12 @@ export default function SummaryCharts({ data }: Props) {
         </ResponsiveContainer>
       </div>
 
-      {/* Budget usage donut */}
       <div className="bg-white rounded-xl border p-4">
         <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Budget Usage</h3>
         <ResponsiveContainer width="100%" height={150}>
           <PieChart>
             <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value">
-              {pieData.map((_, i) => (
-                <Cell key={i} fill={COLORS[i]} />
-              ))}
+              {pieData.map((_, i) => <Cell key={i} fill={COLORS[i]} />)}
             </Pie>
             <Tooltip formatter={(v) => fmt(Number(v))} />
             <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />

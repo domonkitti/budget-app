@@ -1,19 +1,32 @@
+export type SourceYearEntry = {
+  year: number
+  source: string
+  fund_type: string
+  budget: number
+  target: number
+  remain: number
+}
+
+export type SubJobYearEntry = {
+  name: string
+  sort_order: number | null
+  year: number
+  fund_type: string
+  budget: number
+  target: number
+  remain: number
+}
+
 export type FlatProject = {
   id: number
   project_code: string
+  item_no: string | null
   name: string
   division: string | null
   project_type: string
   year: number
-  budget_committed: number
-  budget_invest: number
-  budget_total: number
-  target_committed: number
-  target_invest: number
-  target_total: number
-  remain_committed: number
-  remain_invest: number
-  remain_total: number
+  sub_jobs: SubJobYearEntry[]
+  source_breakdown: SourceYearEntry[]
 }
 
 export type SummaryRow = {
@@ -46,6 +59,15 @@ export type SubJobTag = {
   percentage: number
 }
 
+export type ProjectTag = {
+  id: number
+  project_id: number
+  tag_value_id: number
+  tag_code: string
+  category_id: number
+  percentage: number
+}
+
 export type TagSummaryRow = {
   code: string
   budget: number
@@ -56,4 +78,50 @@ export type TagSummaryRow = {
 export type SubJobTagInput = {
   tag_value_id: number
   percentage: number
+}
+
+export type CategoryAllocationSelection = {
+  id?: number
+  category_id: number
+  project_id: number
+  target_type: "project" | "job"
+  sub_job_name?: string | null
+}
+
+export type Category = TagCategory
+export type CategoryValue = TagValue
+export type ProjectCategoryAllocation = ProjectTag
+export type JobCategoryAllocation = SubJobTag
+export type CategorySummaryRow = TagSummaryRow
+export type CategoryAllocationInput = SubJobTagInput
+
+export type FilterOptions = {
+  years: number[]
+  sources: string[]
+}
+
+export type Project = {
+  id: number
+  project_code: string
+  year: number
+  project_type: string
+  item_no: string | null
+  name: string
+  division: string | null
+  department: string | null
+}
+
+export type SubJob = {
+  id: number
+  project_id: number
+  name: string
+  sort_order: number | null
+  fund_type: string
+  budget: number
+  target: number
+  remain: number
+}
+
+export type ProjectDetail = Project & {
+  sub_jobs: SubJob[]
 }

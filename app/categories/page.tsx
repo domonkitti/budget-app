@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
-import type { TagCategory, TagValue } from "@/lib/types"
+import type { Category, CategoryValue } from "@/lib/types"
 
-export default function TagsPage() {
-  const [categories, setCategories] = useState<TagCategory[]>([])
-  const [values, setValues] = useState<Record<number, TagValue[]>>({})
+export default function CategoriesPage() {
+  const [categories, setCategories] = useState<Category[]>([])
+  const [values, setValues] = useState<Record<number, CategoryValue[]>>({})
   const [newCat, setNewCat] = useState("")
   const [newVal, setNewVal] = useState<Record<number, string>>({})
   const [expanded, setExpanded] = useState<number | null>(null)
@@ -15,19 +15,19 @@ export default function TagsPage() {
   useEffect(() => { loadCategories() }, [])
 
   async function loadCategories() {
-    const cats = await api.tagCategories()
+    const cats = await api.categories()
     setCategories(cats)
   }
 
   async function loadValues(catID: number) {
-    const vals = await api.tagValues(catID)
+    const vals = await api.categoryValues(catID)
     setValues(v => ({ ...v, [catID]: vals }))
   }
 
   async function addCategory() {
     if (!newCat.trim()) return
     try {
-      await api.createCategory(newCat.trim())
+      await api.createAllocationCategory(newCat.trim())
       setNewCat("")
       loadCategories()
     } catch { setError("Category name already exists") }
@@ -35,7 +35,7 @@ export default function TagsPage() {
 
   async function deleteCategory(id: number) {
     if (!confirm("Delete this category and all its values?")) return
-    await api.deleteCategory(id)
+    await api.deleteAllocationCategory(id)
     loadCategories()
   }
 
@@ -43,14 +43,14 @@ export default function TagsPage() {
     const code = (newVal[catID] ?? "").trim()
     if (!code) return
     try {
-      await api.createValue(catID, code)
+      await api.createCategoryValue(catID, code)
       setNewVal(v => ({ ...v, [catID]: "" }))
       loadValues(catID)
     } catch { setError("Value already exists in this category") }
   }
 
   async function deleteValue(catID: number, valID: number) {
-    await api.deleteValue(valID)
+    await api.deleteCategoryValue(valID)
     loadValues(catID)
   }
 
@@ -66,9 +66,8 @@ export default function TagsPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b px-6 py-4">
-        <a href="/" className="text-sm text-blue-500 hover:underline">← Dashboard</a>
-        <h1 className="text-xl font-bold text-gray-800 mt-1">Tag Management</h1>
-        <p className="text-sm text-gray-400">Create grouping categories and values</p>
+        <h1 className="text-xl font-bold text-gray-800">Category Settings</h1>
+        <p className="text-sm text-gray-400">Create categories like SO, then add values like SO1, SO2, SO3.</p>
       </header>
 
       <main className="px-6 py-6 max-w-2xl mx-auto">
