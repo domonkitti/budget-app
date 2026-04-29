@@ -3,6 +3,20 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  --bg-base:        #0B0F1A;
+  --bg-surface:     #0F172A;
+  --bg-elevated:    #111827;
+  --border-subtle:  #1F2937;
+  --border-strong:  #374151;
+  --text-primary:   #F9FAFB;
+  --text-secondary: #D1D5DB;
+  --text-muted:     #9CA3AF;
+
+  --gradient-primary: linear-gradient(135deg, #6366F1, #8B5CF6);
+  --gradient-budget:  linear-gradient(180deg, #60A5FA, #1E40AF);
+  --gradient-target:  linear-gradient(180deg, #34D399, #047857);
+  --gradient-remain:  linear-gradient(180deg, #FBBF24, #B45309);
 }
 
 @theme inline {
@@ -10,13 +24,6 @@
   --color-foreground: var(--foreground);
   --font-sans: Arial, Helvetica, sans-serif;
   --font-mono: "Courier New", Courier, monospace;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
