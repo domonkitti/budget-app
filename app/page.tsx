@@ -5,40 +5,55 @@ import { api } from "@/lib/api"
 import type { FlatProject, FilterOptions } from "@/lib/types"
 import SummaryCharts from "@/components/SummaryCharts"
 import BudgetTable from "@/components/BudgetTable"
+import { useViewMode } from "./SnapshotProvider"
 
 export default function Home() {
-  const [data, setData] = useState<FlatProject[]>([])
+  const { viewMode, clearMode } = useViewMode()
+  const [liveData, setLiveData] = useState<FlatProject[]>([])
+  const [scenarioData, setScenarioData] = useState<FlatProject[] | null>(null)
   const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [] })
   const [source, setSource] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const data = viewMode.kind === "snapshot"
+    ? viewMode.data
+    : viewMode.kind === "scenario" && scenarioData
+      ? scenarioData
+      : liveData
+
   useEffect(() => {
     api.filterOptions().then(setOptions).catch(() => {})
   }, [])
 
+  // Load live data
   useEffect(() => {
+    if (viewMode.kind !== "live") { setLoading(false); return }
     let ignore = false
+    setLoading(true)
     const params: Record<string, string> = {}
     if (source) params.source = source
     api.flatProjects(params)
-      .then(result => {
-        if (ignore) return
-        setData(result)
-        setError(null)
-      })
-      .catch(e => {
-        if (ignore) return
-        setError(e.message)
-      })
-      .finally(() => {
-        if (ignore) return
-        setLoading(false)
-      })
-    return () => {
-      ignore = true
-    }
-  }, [source])
+      .then((result) => { if (!ignore) { setLiveData(result); setError(null) } })
+      .catch((e) => { if (!ignore) setError(e.message) })
+      .finally(() => { if (!ignore) setLoading(false) })
+    return () => { ignore = true }
+  }, [source, viewMode.kind])
+
+  // Load scenario flat data when entering scenario mode
+  useEffect(() => {
+    if (viewMode.kind !== "scenario") { setScenarioData(null); return }
+    let ignore = false
+    setLoading(true)
+    setScenarioData(null)
+    api.scenarioFlat(viewMode.item.id)
+      .then((result) => { if (!ignore) { setScenarioData(result); setError(null) } })
+      .catch((e) => { if (!ignore) setError(e.message) })
+      .finally(() => { if (!ignore) setLoading(false) })
+    return () => { ignore = true }
+  }, [viewMode.kind === "scenario" ? viewMode.item.id : 0]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isFiltered = viewMode.kind !== "live"
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -54,13 +69,14 @@ export default function Home() {
           <select
             className="border rounded-lg px-2 py-1 text-sm"
             value={source}
-            onChange={e => setSource(e.target.value)}
+            disabled={isFiltered}
+            onChange={(e) => setSource(e.target.value)}
           >
             <option value="">All sources</option>
-            {options.sources.map(s => <option key={s} value={s}>{s}</option>)}
+            {options.sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        {source && (
+        {source && !isFiltered && (
           <button onClick={() => setSource("")} className="text-xs text-gray-400 hover:text-gray-600 underline">
             Clear
           </button>

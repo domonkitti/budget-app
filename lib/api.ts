@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -133,6 +133,32 @@ export const api = {
     }),
   categorySummary: (category: string, params?: Record<string, string>) =>
     get<TagSummaryRow[]>("/summary/by-tag", { category, ...params }),
+
+  // Snapshots
+  snapshots: () => get<Snapshot[]>("/snapshots"),
+  createSnapshot: (label: string, note?: string) =>
+    post<Snapshot>("/snapshots", { label, note: note ?? "" }),
+  getSnapshot: (id: number) => get<SnapshotDetail>(`/snapshots/${id}`),
+  deleteSnapshot: (id: number) => del(`/snapshots/${id}`),
+
+  // Inline editing (live)
+  updateSubJob: (id: number, budget: number, target: number) =>
+    put(`/sub-jobs/${id}`, { budget, target }),
+  updateBudgetSource: (id: number, budget: number, target: number) =>
+    put(`/budget-sources/${id}`, { budget, target }),
+
+  // Scenarios
+  scenarios: () => get<Scenario[]>("/scenarios"),
+  createScenario: (label: string, note?: string) =>
+    post<Scenario>("/scenarios", { label, note: note ?? "" }),
+  deleteScenario: (id: number) => del(`/scenarios/${id}`),
+  scenarioFlat: (id: number) => get<FlatProject[]>(`/scenarios/${id}/flat`),
+  scenarioProjectDetail: (scenId: number, code: string) =>
+    get<ProjectDetail>(`/scenarios/${scenId}/projects/${encodeURIComponent(code)}`),
+  updateScenarioSubJob: (scenId: number, sjId: number, budget: number, target: number) =>
+    put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target }),
+  updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number) =>
+    put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target }),
   allocationSelections: (categoryId: number) =>
     get<CategoryAllocationSelection[]>("/allocation-selections", { category_id: String(categoryId) }),
   setAllocationSelections: (categoryId: number, selections: CategoryAllocationSelection[]) =>

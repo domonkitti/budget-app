@@ -95,6 +95,25 @@ export type JobCategoryAllocation = SubJobTag
 export type CategorySummaryRow = TagSummaryRow
 export type CategoryAllocationInput = SubJobTagInput
 
+export type Snapshot = {
+  id: number
+  label: string
+  note?: string
+  created_at: string
+}
+
+export type SnapshotDetail = Snapshot & {
+  data: FlatProject[]
+}
+
+export type Scenario = {
+  id: number
+  label: string
+  note?: string
+  created_at: string
+  updated_at: string
+}
+
 export type FilterOptions = {
   years: number[]
   sources: string[]
@@ -117,6 +136,18 @@ export type SubJob = {
   name: string
   sort_order: number | null
   fund_type: string
+  data_year: number
+  budget: number
+  target: number
+  remain: number
+}
+
+export type BudgetSource = {
+  id: number
+  project_id: number
+  source: string
+  fund_type: string
+  data_year: number
   budget: number
   target: number
   remain: number
@@ -124,4 +155,5 @@ export type SubJob = {
 
 export type ProjectDetail = Project & {
   sub_jobs: SubJob[]
+  budget_sources: BudgetSource[]
 }
