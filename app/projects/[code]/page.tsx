@@ -249,15 +249,39 @@ export default function ProjectPage() {
     } catch {} finally { setUndoing(null) }
   }
 
-  // ── Sum validation ─────────────────────────────────────────────────────────
+  // ── Sum validation — per (fund_type × data_year × field) ──────────────────
 
-  const sjBudget = project?.sub_jobs.reduce((s, r) => s + effectiveValue(r, "sj", "budget"), 0) ?? 0
-  const bsBudget = project?.budget_sources.reduce((s, r) => s + effectiveValue(r, "bs", "budget"), 0) ?? 0
-  const sjTarget = project?.sub_jobs.reduce((s, r) => s + effectiveValue(r, "sj", "target"), 0) ?? 0
-  const bsTarget = project?.budget_sources.reduce((s, r) => s + effectiveValue(r, "bs", "target"), 0) ?? 0
-  const budgetMismatch = project && Math.abs(sjBudget - bsBudget) > 0.001
-  const targetMismatch = project && Math.abs(sjTarget - bsTarget) > 0.001
-  const hasMismatch = budgetMismatch || targetMismatch
+  type SumMismatch = { fund_type: string; data_year: number; field: "budget" | "target"; sj: number; bs: number }
+
+  const sumMismatches: SumMismatch[] = (() => {
+    if (!project) return []
+    const sj = new Map<string, number>()
+    const bs = new Map<string, number>()
+    const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v)
+    for (const r of project.sub_jobs) {
+      const k = `${r.fund_type}|${r.data_year}`
+      add(sj, k + "|budget", effectiveValue(r, "sj", "budget"))
+      add(sj, k + "|target", effectiveValue(r, "sj", "target"))
+    }
+    for (const r of project.budget_sources) {
+      const k = `${r.fund_type}|${r.data_year}`
+      add(bs, k + "|budget", effectiveValue(r, "bs", "budget"))
+      add(bs, k + "|target", effectiveValue(r, "bs", "target"))
+    }
+    const all = new Set([...sj.keys(), ...bs.keys()])
+    const out: SumMismatch[] = []
+    for (const key of [...all].sort()) {
+      const sv = sj.get(key) ?? 0
+      const bv = bs.get(key) ?? 0
+      if (Math.abs(sv - bv) > 0.001) {
+        const [fund_type, yr, field] = key.split("|")
+        out.push({ fund_type, data_year: parseInt(yr), field: field as "budget" | "target", sj: sv, bs: bv })
+      }
+    }
+    return out
+  })()
+
+  const hasMismatch = sumMismatches.length > 0
 
   const pendingCount = pending.size
 
@@ -379,10 +403,19 @@ export default function ProjectPage() {
 
       {/* Sum mismatch warning */}
       {project && hasMismatch && (
-        <div style={{ background: "#FFF7ED", borderBottom: "1.5px solid #FB923C", padding: "6px 24px", fontSize: 12, color: "#C2410C" }}>
-          ⚠ ยอดรวมไม่ตรงกัน —{" "}
-          {budgetMismatch && <span>งบ: งานย่อย {fmt3(sjBudget)} ≠ แหล่งเงิน {fmt3(bsBudget)}{targetMismatch ? "  |  " : ""}</span>}
-          {targetMismatch && <span>เป้า: งานย่อย {fmt3(sjTarget)} ≠ แหล่งเงิน {fmt3(bsTarget)}</span>}
+        <div style={{ background: "#FFF7ED", borderBottom: "1.5px solid #FB923C", padding: "8px 24px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#C2410C", marginBottom: 4 }}>
+            ⚠ ยอดรวมไม่ตรงกัน — งานย่อย ≠ แหล่งเงิน ในบางกลุ่ม
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
+            {sumMismatches.map((m) => (
+              <span key={`${m.fund_type}|${m.data_year}|${m.field}`} style={{ fontSize: 11, color: "#92400E", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                {m.field === "budget" ? "งบ" : "เป้า"} · {m.fund_type} · ปี {m.data_year}
+                {" — "}งานย่อย <strong>{fmt3(m.sj)}</strong> ≠ แหล่งเงิน <strong>{fmt3(m.bs)}</strong>
+                {" "}({m.sj > m.bs ? "+" : ""}{fmt3(m.sj - m.bs)})
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
@@ -492,7 +525,7 @@ export default function ProjectPage() {
       {pendingCount > 0 && (
         <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 50, background: "#1E293B", borderTop: "1px solid #334155", padding: "12px 24px", display: "flex", alignItems: "center", gap: 12 }}>
           {hasMismatch && (
-            <span style={{ fontSize: 11, color: "#FB923C", marginRight: 4 }}>⚠ ยอดไม่ตรง</span>
+            <span style={{ fontSize: 11, color: "#FB923C", marginRight: 4 }}>⚠ ยอดไม่ตรง {sumMismatches.length} กลุ่ม</span>
           )}
           <span style={{ fontSize: 12, color: "#94A3B8" }}>
             {pendingCount} รายการรอบันทึก — <span style={{ color: "#FEF9C3" }}>เซลล์สีเหลือง = ยังไม่บันทึก</span>
