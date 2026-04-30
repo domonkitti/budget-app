@@ -101,26 +101,22 @@ function EditableCell({
   )
 }
 
-// ─── Totals row ───────────────────────────────────────────────────────────────
+// ─── Totals row (display-only, receives pre-computed values) ──────────────────
 
-function TotalsRow({ label, rows, pending, prefix }: {
-  label: string; rows: (SubJob | BudgetSource)[]
-  pending: Map<string, PendingRow>; prefix: "sj" | "bs"
+function TotalsRow({ label, sc_b, si_b, sc_t, si_t }: {
+  label: string; sc_b: number; si_b: number; sc_t: number; si_t: number
 }) {
-  const eff = (r: SubJob | BudgetSource) => pending.get(`${prefix}-${r.id}`) ?? { budget: r.budget, target: r.target }
-  const sc = rows.filter((r) => r.fund_type === "ผูกพัน").reduce((a, r) => { const e = eff(r); return { budget: a.budget + e.budget, target: a.target + e.target } }, { budget: 0, target: 0 })
-  const si = rows.filter((r) => r.fund_type === "ลงทุน").reduce((a, r) => { const e = eff(r); return { budget: a.budget + e.budget, target: a.target + e.target } }, { budget: 0, target: 0 })
-  const tb = sc.budget + si.budget; const tt = sc.target + si.target; const tr_ = tb - tt
-  const scr = sc.budget - sc.target; const sir = si.budget - si.target
+  const tb = sc_b + si_b; const tt = sc_t + si_t; const tr_ = tb - tt
+  const scr = sc_b - sc_t; const sir = si_b - si_t
   const T = (val: number): React.CSSProperties => ({ ...td(), textAlign: "right", fontFamily: "monospace", fontWeight: 700, background: "#F0FDF4", color: val < 0 ? "#DC2626" : "#166534" })
   return (
     <tr style={{ background: "#F0FDF4", borderTop: "1.5px solid #86EFAC" }}>
       <td style={{ ...td(), fontWeight: 700, color: "#166534" }} colSpan={2}>{label}</td>
-      <td style={T(sc.budget)}>{fmt3(sc.budget)}</td>
-      <td style={T(si.budget)}>{fmt3(si.budget)}</td>
+      <td style={T(sc_b)}>{fmt3(sc_b)}</td>
+      <td style={T(si_b)}>{fmt3(si_b)}</td>
       <td style={T(tb)}>{fmt3(tb)}</td>
-      <td style={T(sc.target)}>{fmt3(sc.target)}</td>
-      <td style={T(si.target)}>{fmt3(si.target)}</td>
+      <td style={T(sc_t)}>{fmt3(sc_t)}</td>
+      <td style={T(si_t)}>{fmt3(si_t)}</td>
       <td style={T(tt)}>{fmt3(tt)}</td>
       <td style={T(scr)}>{fmt3(scr)}</td>
       <td style={T(sir)}>{fmt3(sir)}</td>
@@ -249,25 +245,47 @@ export default function ProjectPage() {
     } catch {} finally { setUndoing(null) }
   }
 
-  // ── Sum validation — per (fund_type × data_year × field) ──────────────────
+  const pendingCount = pending.size
+
+  // ── Table helpers — computed first so validation + totals use the same rows ─
+
+  const subJobGroups = project ? groupSubJobs(project.sub_jobs ?? []) : []
+  const sourceGroups = project ? groupSources(project.budget_sources ?? []) : []
+
+  // ── Sum validation — per (year × fund_type × field), grouped rows only ─────
 
   type SumMismatch = { fund_type: string; data_year: number; field: "budget" | "target"; sj: number; bs: number }
 
   const sumMismatches: SumMismatch[] = (() => {
-    if (!project) return []
     const sj = new Map<string, number>()
     const bs = new Map<string, number>()
     const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v)
-    for (const r of project.sub_jobs) {
-      const k = `${r.fund_type}|${r.data_year}`
-      add(sj, k + "|budget", effectiveValue(r, "sj", "budget"))
-      add(sj, k + "|target", effectiveValue(r, "sj", "target"))
+
+    for (const g of subJobGroups) {
+      for (const y of g.years) {
+        if (y.committed) {
+          add(sj, `ผูกพัน|${y.year}|budget`, effectiveValue(y.committed, "sj", "budget"))
+          add(sj, `ผูกพัน|${y.year}|target`, effectiveValue(y.committed, "sj", "target"))
+        }
+        if (y.invest) {
+          add(sj, `ลงทุน|${y.year}|budget`, effectiveValue(y.invest, "sj", "budget"))
+          add(sj, `ลงทุน|${y.year}|target`, effectiveValue(y.invest, "sj", "target"))
+        }
+      }
     }
-    for (const r of project.budget_sources) {
-      const k = `${r.fund_type}|${r.data_year}`
-      add(bs, k + "|budget", effectiveValue(r, "bs", "budget"))
-      add(bs, k + "|target", effectiveValue(r, "bs", "target"))
+    for (const g of sourceGroups) {
+      for (const y of g.years) {
+        if (y.committed) {
+          add(bs, `ผูกพัน|${y.year}|budget`, effectiveValue(y.committed, "bs", "budget"))
+          add(bs, `ผูกพัน|${y.year}|target`, effectiveValue(y.committed, "bs", "target"))
+        }
+        if (y.invest) {
+          add(bs, `ลงทุน|${y.year}|budget`, effectiveValue(y.invest, "bs", "budget"))
+          add(bs, `ลงทุน|${y.year}|target`, effectiveValue(y.invest, "bs", "target"))
+        }
+      }
     }
+
     const all = new Set([...sj.keys(), ...bs.keys()])
     const out: SumMismatch[] = []
     for (const key of [...all].sort()) {
@@ -283,12 +301,28 @@ export default function ProjectPage() {
 
   const hasMismatch = sumMismatches.length > 0
 
-  const pendingCount = pending.size
+  // Totals computed from the grouped (displayed) rows only — guarantees totals match cells exactly
+  const sjTotals = (() => {
+    let sc_b = 0, sc_t = 0, si_b = 0, si_t = 0
+    for (const g of subJobGroups) {
+      for (const y of g.years) {
+        if (y.committed) { sc_b += effectiveValue(y.committed, "sj", "budget"); sc_t += effectiveValue(y.committed, "sj", "target") }
+        if (y.invest)    { si_b += effectiveValue(y.invest,    "sj", "budget"); si_t += effectiveValue(y.invest,    "sj", "target") }
+      }
+    }
+    return { sc_b, si_b, sc_t, si_t }
+  })()
 
-  // ── Table helpers ──────────────────────────────────────────────────────────
-
-  const subJobGroups = project ? groupSubJobs(project.sub_jobs ?? []) : []
-  const sourceGroups = project ? groupSources(project.budget_sources ?? []) : []
+  const bsTotals = (() => {
+    let sc_b = 0, sc_t = 0, si_b = 0, si_t = 0
+    for (const g of sourceGroups) {
+      for (const y of g.years) {
+        if (y.committed) { sc_b += effectiveValue(y.committed, "bs", "budget"); sc_t += effectiveValue(y.committed, "bs", "target") }
+        if (y.invest)    { si_b += effectiveValue(y.invest,    "bs", "budget"); si_t += effectiveValue(y.invest,    "bs", "target") }
+      }
+    }
+    return { sc_b, si_b, sc_t, si_t }
+  })()
 
   const tableHeader = (
     <thead>
@@ -409,8 +443,8 @@ export default function ProjectPage() {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
             {sumMismatches.map((m) => (
-              <span key={`${m.fund_type}|${m.data_year}|${m.field}`} style={{ fontSize: 11, color: "#92400E", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
-                {m.field === "budget" ? "งบ" : "เป้า"} · {m.fund_type} · ปี {m.data_year}
+              <span key={`${m.data_year}|${m.field}`} style={{ fontSize: 11, color: "#92400E", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
+                {m.field === "budget" ? "งบ" : "เป้า"} · ปี {m.data_year}
                 {" — "}งานย่อย <strong>{fmt3(m.sj)}</strong> ≠ แหล่งเงิน <strong>{fmt3(m.bs)}</strong>
                 {" "}({m.sj > m.bs ? "+" : ""}{fmt3(m.sj - m.bs)})
               </span>
@@ -435,7 +469,7 @@ export default function ProjectPage() {
                     <tbody>
                       {subJobGroups.length === 0 && <tr><td colSpan={11} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
                       {subJobGroups.map((g) => g.years.map((y, yi) => renderYearRow(y.year, y.committed, y.invest, "sj", yi === 0, g.years.length, g.name)))}
-                      {project.sub_jobs.length > 0 && <TotalsRow label="รวมทั้งหมด" rows={project.sub_jobs} pending={pending} prefix="sj" />}
+                      {project.sub_jobs.length > 0 && sjTotals && <TotalsRow label="รวมทั้งหมด" {...sjTotals} />}
                     </tbody>
                   </table>
                 </div>
@@ -452,7 +486,7 @@ export default function ProjectPage() {
                     <tbody>
                       {sourceGroups.length === 0 && <tr><td colSpan={11} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
                       {sourceGroups.map((g) => g.years.map((y, yi) => renderYearRow(y.year, y.committed, y.invest, "bs", yi === 0, g.years.length, g.source)))}
-                      {project.budget_sources.length > 0 && <TotalsRow label="รวมทั้งหมด" rows={project.budget_sources} pending={pending} prefix="bs" />}
+                      {project.budget_sources.length > 0 && bsTotals && <TotalsRow label="รวมทั้งหมด" {...bsTotals} />}
                     </tbody>
                   </table>
                 </div>
