@@ -71,6 +71,24 @@ export default function Navbar() {
     } catch {} finally { setScenSaving(false) }
   }
 
+  async function promoteSnapshot(s: Snapshot) {
+    if (!confirm(`Restore snapshot "${s.label}" to LIVE?\n\nThis will overwrite current live data with the snapshot values.`)) return
+    try {
+      await api.promoteSnapshot(s.id)
+      clearMode()
+      setOpenPanel(null)
+    } catch (e) { alert(String(e)) }
+  }
+
+  async function promoteScenario(s: Scenario) {
+    if (!confirm(`Promote scenario "${s.label}" to LIVE?\n\nThis will overwrite current live data with the scenario values.`)) return
+    try {
+      await api.promoteScenario(s.id)
+      clearMode()
+      setOpenPanel(null)
+    } catch (e) { alert(String(e)) }
+  }
+
   async function viewSnapshotItem(s: Snapshot) {
     setLoading(true)
     try {
@@ -215,6 +233,7 @@ export default function Navbar() {
                         <button type="button" onClick={() => active ? (clearMode(), setOpenPanel(null)) : viewSnapshotItem(s)} style={{ background: active ? "#F59E0B" : "#F3F4F6", color: active ? "#fff" : "#374151", border: "none", borderRadius: 5, padding: "2px 8px", fontSize: 11, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}>
                           {active ? "← Live" : "View"}
                         </button>
+                        <button type="button" onClick={() => promoteSnapshot(s)} title="Restore to LIVE" style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 5, color: "#374151", fontSize: 11, cursor: "pointer", padding: "1px 6px", flexShrink: 0 }}>↑ LIVE</button>
                         <button type="button" onClick={() => deleteSnapshot(s.id)} style={{ background: "none", border: "none", color: "#EF4444", fontSize: 12, cursor: "pointer", padding: "1px 3px", flexShrink: 0 }} title="Delete">✕</button>
                       </div>
                     )
@@ -277,6 +296,7 @@ export default function Navbar() {
                         <button type="button" onClick={() => { active ? clearMode() : setScenario(s); setOpenPanel(null) }} style={{ background: active ? "#8B5CF6" : "#F3F4F6", color: active ? "#fff" : "#374151", border: "none", borderRadius: 5, padding: "2px 8px", fontSize: 11, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}>
                           {active ? "← Live" : "Edit"}
                         </button>
+                        <button type="button" onClick={() => promoteScenario(s)} title="Promote to LIVE" style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 5, color: "#374151", fontSize: 11, cursor: "pointer", padding: "1px 6px", flexShrink: 0 }}>↑ LIVE</button>
                         <button type="button" onClick={() => deleteScenario(s.id)} style={{ background: "none", border: "none", color: "#EF4444", fontSize: 12, cursor: "pointer", padding: "1px 3px", flexShrink: 0 }} title="Delete">✕</button>
                       </div>
                     )

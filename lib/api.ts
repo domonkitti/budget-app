@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -140,6 +140,7 @@ export const api = {
     post<Snapshot>("/snapshots", { label, note: note ?? "" }),
   getSnapshot: (id: number) => get<SnapshotDetail>(`/snapshots/${id}`),
   deleteSnapshot: (id: number) => del(`/snapshots/${id}`),
+  promoteSnapshot: (id: number) => post<void>(`/snapshots/${id}/promote`, {}),
 
   // Inline editing (live)
   updateSubJob: (id: number, budget: number, target: number) =>
@@ -152,6 +153,7 @@ export const api = {
   createScenario: (label: string, note?: string) =>
     post<Scenario>("/scenarios", { label, note: note ?? "" }),
   deleteScenario: (id: number) => del(`/scenarios/${id}`),
+  promoteScenario: (id: number) => post<void>(`/scenarios/${id}/promote`, {}),
   scenarioFlat: (id: number) => get<FlatProject[]>(`/scenarios/${id}/flat`),
   scenarioProjectDetail: (scenId: number, code: string) =>
     get<ProjectDetail>(`/scenarios/${scenId}/projects/${encodeURIComponent(code)}`),
@@ -159,6 +161,10 @@ export const api = {
     put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target }),
   updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number) =>
     put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target }),
+  // Change log
+  projectHistory: (code: string) => get<ChangeLogEntry[]>(`/projects/${code}/history`),
+  undoChange: (id: number) => post<void>(`/change-log/${id}/undo`, {}),
+
   allocationSelections: (categoryId: number) =>
     get<CategoryAllocationSelection[]>("/allocation-selections", { category_id: String(categoryId) }),
   setAllocationSelections: (categoryId: number, selections: CategoryAllocationSelection[]) =>

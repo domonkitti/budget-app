@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import { SnapshotProvider } from "./SnapshotProvider";
 
 export const metadata: Metadata = {
   title: "Budget App",
@@ -13,13 +14,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className="h-full antialiased"
-    >
+    <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <Navbar />
-        {children}
+        <SnapshotProvider>
+          <Navbar />
+          {children}
+        </SnapshotProvider>
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 "use client"
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
 import type { FlatProject, SourceYearEntry, SubJobYearEntry } from "@/lib/types"
 
 const FUND_COLUMNS = [
@@ -1006,7 +1007,14 @@ export default function BudgetTable({ data, years }: Props) {
                         minWidth: 360,
                       }}
                     >
-                      {row.name}
+                      <Link
+                        href={`/projects/${encodeURIComponent(row.project_code)}`}
+                        style={{ color: "inherit", textDecoration: "none" }}
+                        onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = "#3B82F6")}
+                        onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = "inherit")}
+                      >
+                        {row.name}
+                      </Link>
                     </td>
                     {infoVis.code && (
                       <td style={{ ...infoCell(), verticalAlign: "top", fontFamily: "monospace" }}>

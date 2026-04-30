@@ -114,6 +114,20 @@ export type Scenario = {
   updated_at: string
 }
 
+export type ChangeLogEntry = {
+  id: number
+  table_name: string
+  row_id: number
+  project_id: number
+  row_name: string
+  fund_type: string
+  data_year: number
+  field: string
+  old_value: number
+  new_value: number
+  changed_at: string
+}
+
 export type FilterOptions = {
   years: number[]
   sources: string[]
