@@ -126,6 +126,17 @@ export type ChangeLogEntry = {
   old_value: number
   new_value: number
   changed_at: string
+  batch_id: string
+  batch_comment: string
+}
+
+export type BatchSaveRequest = {
+  batch_id: string
+  batch_comment: string
+  sub_job_updates: Array<{ id: number; budget: number; target: number }>
+  budget_source_updates: Array<{ id: number; budget: number; target: number }>
+  new_sub_jobs: Array<{ project_id: number; name: string; sort_order: number | null; fund_type: string; data_year: number; budget: number; target: number }>
+  new_budget_sources: Array<{ project_id: number; source: string; fund_type: string; data_year: number; budget: number; target: number }>
 }
 
 export type FilterOptions = {

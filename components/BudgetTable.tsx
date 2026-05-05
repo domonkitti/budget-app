@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import type { FlatProject, SourceYearEntry, SubJobYearEntry } from "@/lib/types"
 
@@ -22,13 +22,8 @@ type SortDir = "asc" | "desc"
 type NumericFilter = { min: string; max: string }
 type MoneySortState = { kind: "money"; year: number; group: Group; fundKey: FundColumnKey; dir: SortDir }
 type YearSortState = { kind: "year"; dir: SortDir }
-type SortState = MoneySortState | YearSortState | null
-
-const GROUP_ACCENT: Record<Group, string> = {
-  Budget: "rgba(96,165,250,0.20)",
-  Target: "rgba(52,211,153,0.20)",
-  Remain: "rgba(251,191,36,0.20)",
-}
+type ItemSortState = { kind: "item"; dir: SortDir }
+type SortState = MoneySortState | YearSortState | ItemSortState | null
 
 function fmt(n: number) {
   if (n === 0) return <span style={{ color: "#D1D5DB" }}>-</span>
@@ -102,6 +97,21 @@ function parseFilterValue(value: string) {
   if (!cleaned) return null
   const parsed = Number(cleaned)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+function itemNoCompare(a: string | null, b: string | null) {
+  if (!a && !b) return 0
+  if (!a) return 1
+  if (!b) return -1
+  return a.localeCompare(b, "th", { numeric: true, sensitivity: "base" })
+}
+
+function workbookSafeName(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, "_")
+}
+
+function excelMoney(n: number) {
+  return Number((n / 1_000_000).toFixed(3))
 }
 
 // ─── Dropdown primitives ────────────────────────────────────────────────────
@@ -369,14 +379,20 @@ function PivotFilter({
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-type Props = { data: FlatProject[]; years: number[] }
+type Props = {
+  data: FlatProject[]
+  years: number[]
+  extraColumn?: { header: React.ReactNode; cell: (project: FlatProject) => React.ReactNode }
+}
+export type BudgetTableHandle = { exportCurrentView: (label: string) => Promise<void> }
 
-export default function BudgetTable({ data, years }: Props) {
+const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ data, years, extraColumn }, ref) {
   const [selNames, setSelNames] = useState<Set<string>>(new Set())
   const [selCodes, setSelCodes] = useState<Set<string>>(new Set())
   const [selDivisions, setSelDivisions] = useState<Set<string>>(new Set())
   const [selTypes, setSelTypes] = useState<Set<string>>(new Set())
   const [selYears, setSelYears] = useState<Set<string>>(new Set())
+  const [selDisplayYears, setSelDisplayYears] = useState<Set<string>>(new Set())
   const [numFilters, setNumFilters] = useState<Record<string, NumericFilter>>({})
   const [sortState, setSortState] = useState<SortState>(null)
   const [showJobs, setShowJobs] = useState(true)
@@ -398,13 +414,24 @@ export default function BudgetTable({ data, years }: Props) {
     total: true,
   })
 
-  const displayYears = useMemo(
+  const allDisplayYears = useMemo(
     () =>
       years.length > 0
         ? years
         : [...new Set(data.flatMap((row) => row.source_breakdown.map((entry) => entry.year)))].sort(),
     [data, years],
   )
+  const displayYears = useMemo(() => {
+    if (selDisplayYears.size === 0) return allDisplayYears
+    const selected = allDisplayYears.filter((year) => selDisplayYears.has(String(year)))
+    return selected.length > 0 ? selected : allDisplayYears
+  }, [allDisplayYears, selDisplayYears])
+  const displayYearLabel =
+    selDisplayYears.size === 0
+      ? "Years: All"
+      : displayYears.length === 1
+        ? `Years: ${displayYears[0]}`
+        : `Years: ${displayYears.length} / ${allDisplayYears.length}`
   const allNames = useMemo(() => [...new Set(data.map((r) => r.name))].sort((a, b) => a.localeCompare(b, "th")), [data])
   const allCodes = useMemo(() => [...new Set(data.map((r) => r.project_code))].sort(), [data])
   const allDivisions = useMemo(() => [...new Set(data.map((r) => r.division ?? ""))].sort(), [data])
@@ -460,6 +487,12 @@ export default function BudgetTable({ data, years }: Props) {
       if (selDivisions.size > 0 && !selDivisions.has(row.division ?? "")) return false
       if (selTypes.size > 0 && !selTypes.has(row.project_type)) return false
       if (selYears.size > 0 && !selYears.has(String(row.year))) return false
+      if (
+        selDisplayYears.size > 0 &&
+        displayYears.every((year) => getVal(row.source_breakdown, year, null, null, "Budget") === 0)
+      ) {
+        return false
+      }
 
       return numericColumns.every((column) => {
         const min = parseFilterValue(column.filter?.min ?? "")
@@ -471,10 +504,17 @@ export default function BudgetTable({ data, years }: Props) {
         return true
       })
     })
-  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selTypes, selYears, visibleFunds, visibleGroups])
+  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selTypes, selYears, selDisplayYears, visibleFunds, visibleGroups])
 
   const sorted = useMemo(() => {
     if (!sortState) return filtered
+    if (sortState.kind === "item") {
+      return [...filtered].sort((a, b) =>
+        sortState.dir === "asc"
+          ? itemNoCompare(a.item_no, b.item_no)
+          : itemNoCompare(b.item_no, a.item_no),
+      )
+    }
     if (sortState.kind === "year") {
       return [...filtered].sort((a, b) =>
         sortState.dir === "asc" ? a.year - b.year : b.year - a.year,
@@ -502,24 +542,13 @@ export default function BudgetTable({ data, years }: Props) {
     })
   }, [filtered, fundVis, groupVis, sortState])
 
-  // Max values per column for inline data bars
-  const columnMaxValues = useMemo(() => {
-    const map: Record<string, number> = {}
-    displayYears.forEach((year) => {
-      GROUPS.forEach((group) => {
-        FUND_COLUMNS.forEach((col) => {
-          const key = filterKey(year, group.key, col.key)
-          let max = 0
-          sorted.forEach((row) => {
-            const v = getVal(row.source_breakdown, year, null, col.fundType, group.key)
-            if (v > max) max = v
-          })
-          map[key] = max
-        })
-      })
+  function cycleItemSort() {
+    setSortState((current) => {
+      if (!current || current.kind !== "item") return { kind: "item", dir: "asc" }
+      if (current.dir === "asc") return { kind: "item", dir: "desc" }
+      return null
     })
-    return map
-  }, [sorted, displayYears])
+  }
 
   function cycleMoneySort(year: number, group: Group, fundKey: FundColumnKey) {
     setSortState((current) => {
@@ -559,6 +588,17 @@ export default function BudgetTable({ data, years }: Props) {
     }))
   }
 
+  function toggleDisplayYear(year: number, checked: boolean) {
+    const key = String(year)
+    const next =
+      selDisplayYears.size === 0
+        ? new Set(allDisplayYears.map((item) => String(item)))
+        : new Set(selDisplayYears)
+    if (checked) next.add(key)
+    else next.delete(key)
+    setSelDisplayYears(next.size === allDisplayYears.length ? new Set() : next)
+  }
+
   function moneySortIcon(year: number, group: Group, fundKey: FundColumnKey) {
     if (
       !sortState ||
@@ -575,6 +615,115 @@ export default function BudgetTable({ data, years }: Props) {
     if (!sortState || sortState.kind !== "year") return "↕"
     return sortState.dir === "asc" ? "↑" : "↓"
   }
+
+  function itemSortIcon() {
+    if (!sortState || sortState.kind !== "item") return "↕"
+    return sortState.dir === "asc" ? "↑" : "↓"
+  }
+
+  async function exportCurrentView(label: string) {
+    const XLSX = await import("xlsx")
+    const wb = XLSX.utils.book_new()
+    const aoa: (string | number | null)[][] = []
+    const infoHeaders = [
+      "ข้อ",
+      "รายการ",
+      ...(infoVis.code ? ["Code"] : []),
+      ...(infoVis.division ? ["Division"] : []),
+      ...(infoVis.type ? ["Type"] : []),
+      ...(infoVis.year ? ["Start Year"] : []),
+    ]
+    const moneyHeaders = hasMoneyColumns
+      ? displayYears.flatMap((year) =>
+          visibleGroups.flatMap((group) =>
+            visibleFunds.map((column) =>
+              group.key === "Remain"
+                ? `${group.label} ${column.label}`
+                : `${group.label} ${year} ${column.label}`,
+            ),
+          ),
+        )
+      : []
+
+    aoa.push([label])
+    aoa.push([`Exported: ${new Date().toLocaleDateString("th-TH", { dateStyle: "long" })}`])
+    aoa.push(["Values in millions (ล้านบาท)"])
+    aoa.push([])
+    aoa.push([...infoHeaders, ...moneyHeaders])
+
+    function infoValues(row: FlatProject, name: string, itemNo: string | null = "") {
+      return [
+        itemNo ?? "",
+        name,
+        ...(infoVis.code ? [row.project_code] : []),
+        ...(infoVis.division ? [row.division ?? ""] : []),
+        ...(infoVis.type ? [row.project_type] : []),
+        ...(infoVis.year ? [row.year] : []),
+      ]
+    }
+
+    function projectMoneyValues(row: FlatProject) {
+      if (!hasMoneyColumns) return []
+      return displayYears.flatMap((year) =>
+        visibleGroups.flatMap((group) =>
+          visibleFunds.map((column) =>
+            excelMoney(getVal(row.source_breakdown, year, null, column.fundType, group.key)),
+          ),
+        ),
+      )
+    }
+
+    for (const row of sorted) {
+      aoa.push([...infoValues(row, row.name, row.item_no), ...projectMoneyValues(row)])
+
+      if (showJobs) {
+        for (const [index, subJob] of getSubJobRows(row).entries()) {
+          const values = hasMoneyColumns
+            ? displayYears.flatMap((year) =>
+                visibleGroups.flatMap((group) =>
+                  visibleFunds.map((column) =>
+                    excelMoney(getSubJobVal(row.sub_jobs ?? [], subJob.name, year, column.fundType, group.key)),
+                  ),
+                ),
+              )
+            : []
+          aoa.push([...infoValues(row, `${index + 1}. ${subJob.name}`), ...values])
+        }
+      }
+
+      if (showSources) {
+        for (const source of sources) {
+          const values = hasMoneyColumns
+            ? displayYears.flatMap((year) =>
+                visibleGroups.flatMap((group) =>
+                  visibleFunds.map((column) =>
+                    excelMoney(getVal(row.source_breakdown, year, source, column.fundType, group.key)),
+                  ),
+                ),
+              )
+            : []
+          aoa.push([...infoValues(row, `- ${source}`), ...values])
+        }
+      }
+    }
+
+    const sheet = XLSX.utils.aoa_to_sheet(aoa)
+    sheet["!cols"] = [
+      { wch: 8 },
+      { wch: 55 },
+      ...(infoVis.code ? [{ wch: 14 }] : []),
+      ...(infoVis.division ? [{ wch: 14 }] : []),
+      ...(infoVis.type ? [{ wch: 8 }] : []),
+      ...(infoVis.year ? [{ wch: 10 }] : []),
+      ...moneyHeaders.map(() => ({ wch: 16 })),
+    ]
+    sheet["!freeze"] = { xSplit: 0, ySplit: 5 }
+    XLSX.utils.book_append_sheet(wb, sheet, "Current View")
+    const date = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(wb, `${workbookSafeName(label)}_${date}.xlsx`)
+  }
+
+  useImperativeHandle(ref, () => ({ exportCurrentView }))
 
   // Style helpers
   const border = "0.5px solid #E5E7EB"
@@ -605,12 +754,8 @@ export default function BudgetTable({ data, years }: Props) {
 
   function numCellStyle(
     value: number,
-    max: number,
-    group: Group,
-    stickyLeft?: number,
+    variant: "project" | "detail" = "detail",
   ): React.CSSProperties {
-    const pct = max > 0 && value > 0 ? (value / max) * 100 : 0
-    const accent = GROUP_ACCENT[group]
     return {
       border,
       padding: "4px 8px",
@@ -618,24 +763,23 @@ export default function BudgetTable({ data, years }: Props) {
       fontVariantNumeric: "tabular-nums",
       whiteSpace: "nowrap",
       fontSize: 12,
-      color: "#374151",
-      background:
-        value > 0
-          ? `linear-gradient(90deg, ${accent} ${pct}%, transparent ${pct}%)`
-          : "transparent",
-      ...(stickyLeft !== undefined
-        ? { position: "sticky", left: stickyLeft, zIndex: 2 }
-        : {}),
+      color: variant === "project" ? "#111827" : "#374151",
+      background: variant === "project" ? "#F8FAFC" : "transparent",
+      fontWeight: variant === "project" && value !== 0 ? 700 : 400,
     }
   }
 
-  function infoCell(stickyLeft?: number): React.CSSProperties {
+  function infoCell(
+    stickyLeft?: number,
+    variant: "project" | "detail" = "detail",
+  ): React.CSSProperties {
     return {
       border,
       padding: "4px 8px",
-      color: "#374151",
-      background: "#ffffff",
+      color: variant === "project" ? "#111827" : "#374151",
+      background: variant === "project" ? "#F8FAFC" : "#ffffff",
       fontSize: 12,
+      fontWeight: variant === "project" ? 700 : 400,
       ...(stickyLeft !== undefined
         ? { position: "sticky", left: stickyLeft, zIndex: 2 }
         : {}),
@@ -663,6 +807,17 @@ export default function BudgetTable({ data, years }: Props) {
           background: "#F9FAFB",
         }}
       >
+        <DropdownMenu label={displayYearLabel}>
+          {allDisplayYears.map((year) => (
+            <DropdownItem
+              key={year}
+              checked={selDisplayYears.size === 0 || selDisplayYears.has(String(year))}
+              onChange={(v) => toggleDisplayYear(year, v)}
+              label={String(year)}
+            />
+          ))}
+        </DropdownMenu>
+
         <DropdownMenu label="Info">
           {([
             { key: "code" as const, label: "Code" },
@@ -753,6 +908,8 @@ export default function BudgetTable({ data, years }: Props) {
             {/* Row 2 — column headers */}
             <tr>
               <th
+                onClick={cycleItemSort}
+                title={`Sort ข้อ ${itemSortIcon()}`}
                 style={{
                   ...thBase,
                   top: 33,
@@ -760,9 +917,10 @@ export default function BudgetTable({ data, years }: Props) {
                   width: 44,
                   left: 0,
                   position: "sticky",
+                  cursor: "pointer",
                 }}
               >
-                ข้อ
+                ข้อ {itemSortIcon()}
               </th>
               <th
                 style={{
@@ -777,6 +935,11 @@ export default function BudgetTable({ data, years }: Props) {
               >
                 รายการ
               </th>
+              {extraColumn && (
+                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 100, textAlign: "center" }}>
+                  {extraColumn.header}
+                </th>
+              )}
               {infoVis.code && (
                 <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 110 }}>Code</th>
               )}
@@ -876,6 +1039,7 @@ export default function BudgetTable({ data, years }: Props) {
               >
                 <PivotFilter allValues={allNames} selected={selNames} onChange={setSelNames} />
               </th>
+              {extraColumn && <th style={{ ...thBase, top: 66, zIndex: 4 }} />}
               {infoVis.code && (
                 <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allCodes} selected={selCodes} onChange={setSelCodes} />
@@ -981,18 +1145,20 @@ export default function BudgetTable({ data, years }: Props) {
               sorted.map((row, rowIdx) => (
                 <Fragment key={row.project_code}>
                   <tr
-                    style={{ background: rowIdx % 2 === 0 ? "#ffffff" : "#F9FAFB" }}
+                    style={{
+                      background: "#F8FAFC",
+                      boxShadow: rowIdx === 0 ? undefined : "inset 0 1px 0 #D1D5DB",
+                    }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#EEF2FF")
                     }
                     onMouseLeave={(e) =>
-                      (e.currentTarget.style.background =
-                        rowIdx % 2 === 0 ? "#ffffff" : "#F9FAFB")
+                      (e.currentTarget.style.background = "#F8FAFC")
                     }
                   >
                     <td
                       style={{
-                        ...infoCell(0),
+                        ...infoCell(0, "project"),
                         textAlign: "center",
                         verticalAlign: "top",
                         width: 44,
@@ -1002,7 +1168,7 @@ export default function BudgetTable({ data, years }: Props) {
                     </td>
                     <td
                       style={{
-                        ...infoCell(44),
+                        ...infoCell(44, "project"),
                         verticalAlign: "top",
                         minWidth: 360,
                       }}
@@ -1016,23 +1182,28 @@ export default function BudgetTable({ data, years }: Props) {
                         {row.name}
                       </Link>
                     </td>
+                    {extraColumn && (
+                      <td style={{ ...infoCell(undefined, "project"), verticalAlign: "middle", textAlign: "center" }}>
+                        {extraColumn.cell(row)}
+                      </td>
+                    )}
                     {infoVis.code && (
-                      <td style={{ ...infoCell(), verticalAlign: "top", fontFamily: "monospace" }}>
+                      <td style={{ ...infoCell(undefined, "project"), verticalAlign: "top", fontFamily: "monospace" }}>
                         {row.project_code}
                       </td>
                     )}
                     {infoVis.division && (
-                      <td style={{ ...infoCell(), verticalAlign: "top" }}>
+                      <td style={{ ...infoCell(undefined, "project"), verticalAlign: "top" }}>
                         {row.division ?? "-"}
                       </td>
                     )}
                     {infoVis.type && (
-                      <td style={{ ...infoCell(), textAlign: "center", verticalAlign: "top" }}>
+                      <td style={{ ...infoCell(undefined, "project"), textAlign: "center", verticalAlign: "top" }}>
                         {row.project_type}
                       </td>
                     )}
                     {infoVis.year && (
-                      <td style={{ ...infoCell(), textAlign: "center", verticalAlign: "top" }}>
+                      <td style={{ ...infoCell(undefined, "project"), textAlign: "center", verticalAlign: "top" }}>
                         {row.year}
                       </td>
                     )}
@@ -1049,12 +1220,10 @@ export default function BudgetTable({ data, years }: Props) {
                                   column.fundType,
                                   group.key,
                                 )
-                                const max =
-                                  columnMaxValues[filterKey(year, group.key, column.key)] || 1
                                 return (
                                   <td
                                     key={column.key}
-                                    style={numCellStyle(val, max, group.key)}
+                                    style={numCellStyle(val, "project")}
                                   >
                                     {fmt(val)}
                                   </td>
@@ -1070,12 +1239,12 @@ export default function BudgetTable({ data, years }: Props) {
                     getSubJobRows(row).map((subJob, index) => (
                       <tr
                         key={`${row.project_code}-sub-job-${subJob.name}`}
-                        style={{ background: "#F9FAFB" }}
+                        style={{ background: "#ffffff" }}
                         onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#EEF2FF")
+                          (e.currentTarget.style.background = "#F9FAFB")
                         }
                         onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "#F9FAFB")
+                          (e.currentTarget.style.background = "#ffffff")
                         }
                       >
                         <td style={{ ...infoCell(0), width: 44 }} />
@@ -1089,6 +1258,7 @@ export default function BudgetTable({ data, years }: Props) {
                         >
                           {index + 1}. {subJob.name}
                         </td>
+                        {extraColumn && <td style={infoCell()} />}
                         {infoVis.code && <td style={infoCell()} />}
                         {infoVis.division && <td style={infoCell()} />}
                         {infoVis.type && <td style={infoCell()} />}
@@ -1108,12 +1278,10 @@ export default function BudgetTable({ data, years }: Props) {
                                       column.fundType,
                                       group.key,
                                     )
-                                    const max =
-                                      columnMaxValues[filterKey(year, group.key, column.key)] || 1
                                     return (
                                       <td
                                         key={column.key}
-                                        style={numCellStyle(val, max, group.key)}
+                                        style={numCellStyle(val)}
                                       >
                                         {fmt(val)}
                                       </td>
@@ -1130,12 +1298,12 @@ export default function BudgetTable({ data, years }: Props) {
                     sources.map((source) => (
                       <tr
                         key={`${row.project_code}-${source}`}
-                        style={{ background: "#F3F4F6" }}
+                        style={{ background: "#FAFAFA" }}
                         onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#EEF2FF")
+                          (e.currentTarget.style.background = "#F9FAFB")
                         }
                         onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "#F3F4F6")
+                          (e.currentTarget.style.background = "#FAFAFA")
                         }
                       >
                         <td style={{ ...infoCell(0), width: 44 }} />
@@ -1150,6 +1318,7 @@ export default function BudgetTable({ data, years }: Props) {
                         >
                           – {source}
                         </td>
+                        {extraColumn && <td style={infoCell()} />}
                         {infoVis.code && <td style={infoCell()} />}
                         {infoVis.division && <td style={infoCell()} />}
                         {infoVis.type && <td style={infoCell()} />}
@@ -1169,12 +1338,10 @@ export default function BudgetTable({ data, years }: Props) {
                                       column.fundType,
                                       group.key,
                                     )
-                                    const max =
-                                      columnMaxValues[filterKey(year, group.key, column.key)] || 1
                                     return (
                                       <td
                                         key={column.key}
-                                        style={numCellStyle(val, max, group.key)}
+                                        style={numCellStyle(val)}
                                       >
                                         {fmt(val)}
                                       </td>
@@ -1206,4 +1373,6 @@ export default function BudgetTable({ data, years }: Props) {
       </div>
     </div>
   )
-}
+})
+
+export default BudgetTable

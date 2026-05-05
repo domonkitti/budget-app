@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -143,6 +143,10 @@ export const api = {
   promoteSnapshot: (id: number) => post<void>(`/snapshots/${id}/promote`, {}),
 
   // Inline editing (live)
+  createSubJob: (projectId: number, name: string, sortOrder: number | null, fundType: string, dataYear: number, budget: number, target: number) =>
+    post<SubJob>("/sub-jobs", { project_id: projectId, name, sort_order: sortOrder, fund_type: fundType, data_year: dataYear, budget, target }),
+  createBudgetSource: (projectId: number, source: string, fundType: string, dataYear: number, budget: number, target: number) =>
+    post<BudgetSource>("/budget-sources", { project_id: projectId, source, fund_type: fundType, data_year: dataYear, budget, target }),
   updateSubJob: (id: number, budget: number, target: number) =>
     put(`/sub-jobs/${id}`, { budget, target }),
   updateBudgetSource: (id: number, budget: number, target: number) =>
@@ -161,9 +165,18 @@ export const api = {
     put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target }),
   updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number) =>
     put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target }),
+  // Batch save
+  batchSave: (req: BatchSaveRequest) => post<void>("/batch-save", req),
+
   // Change log
   projectHistory: (code: string) => get<ChangeLogEntry[]>(`/projects/${code}/history`),
   undoChange: (id: number) => post<void>(`/change-log/${id}/undo`, {}),
+  updateBatchComment: (batchId: string, comment: string) =>
+    fetch(`${BASE}/change-log/batch/${encodeURIComponent(batchId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment }),
+    }).then(r => { if (!r.ok) throw new Error(r.statusText) }),
 
   allocationSelections: (categoryId: number) =>
     get<CategoryAllocationSelection[]>("/allocation-selections", { category_id: String(categoryId) }),

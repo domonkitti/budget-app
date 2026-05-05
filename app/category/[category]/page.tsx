@@ -2,13 +2,58 @@
 
 import Link from "next/link"
 import { useParams } from "next/navigation"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, useCallback, Fragment } from "react"
 import { api } from "@/lib/api"
-import type { Category, CategorySummaryRow, FilterOptions, FlatProject } from "@/lib/types"
+import type {
+  Category, CategorySummaryRow, FilterOptions, FlatProject,
+  CategoryValue, CategoryAllocationSelection, CategoryAllocationInput,
+  ProjectCategoryAllocation, JobCategoryAllocation,
+  SubJobYearEntry,
+} from "@/lib/types"
 import BudgetTable from "@/components/BudgetTable"
 import { useViewMode } from "@/app/SnapshotProvider"
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { exportCategoryExcel } from "@/lib/exportExcel"
+
+// ─── Allocation helpers ───────────────────────────────────────────────────────
+
+type AllocationTag = ProjectCategoryAllocation | JobCategoryAllocation
+type DraftRow = { valueId: number; percentage: number }
+type AllocRow =
+  | { kind: "project"; key: string; projectId: number; label: string; budget: number; target: number }
+  | { kind: "job"; key: string; projectId: number; subJobName: string; label: string; budget: number; target: number }
+
+function projectKey(id: number) { return `project:${id}` }
+function jobKey(pid: number, name: string) { return `job:${pid}:${name}` }
+
+function sumSubJobs(subJobs: SubJobYearEntry[], name?: string) {
+  return subJobs.reduce(
+    (s, r) => {
+      if (name && r.name !== name) return s
+      return { budget: s.budget + r.budget, target: s.target + r.target }
+    },
+    { budget: 0, target: 0 },
+  )
+}
+
+function uniqueJobsFromFlat(project: FlatProject) {
+  const byName = new Map<string, { name: string; sort_order: number | null }>()
+  ;(project.sub_jobs ?? []).forEach((j) => {
+    const ex = byName.get(j.name)
+    const ao = j.sort_order ?? Number.MAX_SAFE_INTEGER
+    const bo = ex?.sort_order ?? Number.MAX_SAFE_INTEGER
+    if (!ex || ao < bo) byName.set(j.name, { name: j.name, sort_order: j.sort_order })
+  })
+  return [...byName.values()].sort((a, b) => {
+    const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER
+    const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER
+    return ao - bo || a.name.localeCompare(b.name, "th")
+  })
+}
+
+function cleanPct(v: number) {
+  return Math.round(Math.min(100, Math.max(0, v)) * 100) / 100
+}
 
 type Metric = "budget" | "target" | "remain"
 
@@ -316,6 +361,113 @@ export default function CategorySummaryPage() {
   const [error, setError] = useState("")
   const [exporting, setExporting] = useState(false)
 
+  // Inline allocation state
+  const [catValues, setCatValues] = useState<CategoryValue[]>([])
+  const [selectionKeys, setSelectionKeys] = useState<Set<string>>(new Set())
+  const [tableAllocations, setTableAllocations] = useState<Record<string, AllocationTag[]>>({})
+  const [modalProject, setModalProject] = useState<FlatProject | null>(null)
+  const [modalRows, setModalRows] = useState<AllocRow[]>([])
+  const [modalAllocations, setModalAllocations] = useState<Record<string, AllocationTag[]>>({})
+  const [modalLoading, setModalLoading] = useState(false)
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+  const [draft, setDraft] = useState<DraftRow[]>([])
+  const [draftSaving, setDraftSaving] = useState(false)
+  const [draftError, setDraftError] = useState("")
+
+  // ─── Inline allocation ──────────────────────────────────────────────────────
+
+  const openModal = useCallback(async (project: FlatProject) => {
+    setModalProject(project)
+    setModalLoading(true)
+    setEditingKey(null)
+    setDraft([])
+    setDraftError("")
+    const cat = category
+    if (!cat) { setModalLoading(false); return }
+
+    const jobs = uniqueJobsFromFlat(project)
+    const rows: AllocRow[] = []
+    const allocs: Record<string, AllocationTag[]> = {}
+
+    if (jobs.length === 0) {
+      const key = projectKey(project.id)
+      const tags = await api.projectCategoryAllocations(project.id)
+      allocs[key] = tags.filter((t) => t.category_id === cat.id)
+      const totals = sumSubJobs(project.sub_jobs ?? [])
+      rows.push({ kind: "project", key, projectId: project.id, label: "ทั้งโครงการ", ...totals })
+    } else {
+      await Promise.all(jobs.map(async (job, idx) => {
+        const key = jobKey(project.id, job.name)
+        const tags = await api.jobCategoryAllocations(project.id, job.name)
+        allocs[key] = tags.filter((t) => t.category_id === cat.id)
+        const totals = sumSubJobs(project.sub_jobs ?? [], job.name)
+        rows.push({ kind: "job", key, projectId: project.id, subJobName: job.name, label: `${idx + 1}. ${job.name}`, ...totals })
+      }))
+    }
+
+    setModalAllocations(allocs)
+    setModalRows(rows)
+    setModalLoading(false)
+  }, [category])
+
+  function startRowEdit(row: AllocRow) {
+    const existing = modalAllocations[row.key] ?? []
+    setDraft(existing.map((t) => ({ valueId: t.tag_value_id, percentage: cleanPct(t.percentage) })))
+    setEditingKey(row.key)
+    setDraftError("")
+  }
+
+  async function saveRowEdit(row: AllocRow) {
+    if (!category) return
+    const cleanDraft = draft.map((d) => ({ ...d, percentage: cleanPct(d.percentage) }))
+    const total = cleanDraft.reduce((s, d) => s + d.percentage, 0)
+    if (cleanDraft.length > 0 && (total < 99.99 || total > 100.01)) {
+      setDraftError(`รวม ${total.toFixed(2)}% — ต้องเป็น 100%`)
+      return
+    }
+    if (cleanDraft.some((d) => !d.valueId)) {
+      setDraftError("ต้องเลือก value ทุกแถว")
+      return
+    }
+    const input: CategoryAllocationInput[] = cleanDraft.map((d) => ({ tag_value_id: d.valueId, percentage: d.percentage }))
+    setDraftSaving(true)
+    try {
+      let updatedTags: AllocationTag[]
+      if (row.kind === "project") {
+        await api.setProjectCategoryAllocations(row.projectId, category.id, input)
+        const updated = await api.projectCategoryAllocations(row.projectId)
+        updatedTags = updated.filter((t) => t.category_id === category.id)
+        setModalAllocations((prev) => ({ ...prev, [row.key]: updatedTags }))
+      } else {
+        await api.setJobCategoryAllocations(row.projectId, row.subJobName, category.id, input)
+        const updated = await api.jobCategoryAllocations(row.projectId, row.subJobName)
+        updatedTags = updated.filter((t) => t.category_id === category.id)
+        setModalAllocations((prev) => ({ ...prev, [row.key]: updatedTags }))
+      }
+      // sync table allocations so cell refreshes immediately
+      setTableAllocations((prev) => ({ ...prev, [row.key]: updatedTags }))
+      setSelectionKeys((prev) => {
+        const next = new Set(prev)
+        if (input.length > 0) next.add(row.key); else next.delete(row.key)
+        return next
+      })
+      setEditingKey(null)
+    } catch (e: unknown) {
+      setDraftError(String(e))
+    } finally {
+      setDraftSaving(false)
+    }
+  }
+
+  function fillRemaining(idx: number) {
+    const others = draft.reduce((s, d, i) => i !== idx ? s + (d.percentage || 0) : s, 0)
+    setDraft((prev) => prev.map((d, i) => i === idx ? { ...d, percentage: cleanPct(100 - others) } : d))
+  }
+
+  const draftTotal = draft.reduce((s, d) => s + (d.percentage || 0), 0)
+
+  const fmt2 = (n: number) => (n / 1_000_000).toFixed(2) + "M"
+
   async function handleExport() {
     setExporting(true)
     try {
@@ -343,11 +495,44 @@ export default function CategorySummaryPage() {
       api.filterOptions().catch(() => ({ years: [], sources: [] } as FilterOptions)),
       api.flatProjects(),
     ])
-      .then(([cats, opts, flat]) => {
+      .then(async ([cats, opts, flat]) => {
         if (ignore) return
-        setCategory(cats.find((item) => item.name === categoryName) ?? null)
+        const cat = cats.find((item) => item.name === categoryName) ?? null
+        setCategory(cat)
         setOptions(opts)
         setLiveProjects(flat)
+        if (cat) {
+          const [vals, sels] = await Promise.all([
+            api.categoryValues(cat.id),
+            api.allocationSelections(cat.id),
+          ])
+          if (ignore) return
+          setCatValues(vals)
+          setSelectionKeys(new Set(sels.map((s: CategoryAllocationSelection) =>
+            s.target_type === "project"
+              ? projectKey(s.project_id)
+              : s.sub_job_name ? jobKey(s.project_id, s.sub_job_name) : ""
+          ).filter(Boolean)))
+
+          // Load allocations for every project/job (not just worklist keys)
+          const allAllocs: Record<string, AllocationTag[]> = {}
+          await Promise.all(flat.map(async (p: FlatProject) => {
+            const jobs = uniqueJobsFromFlat(p)
+            if (jobs.length === 0) {
+              const key = projectKey(p.id)
+              const tags = await api.projectCategoryAllocations(p.id)
+              allAllocs[key] = tags.filter((t) => t.category_id === cat.id)
+            } else {
+              await Promise.all(jobs.map(async (j) => {
+                const key = jobKey(p.id, j.name)
+                const tags = await api.jobCategoryAllocations(p.id, j.name)
+                allAllocs[key] = tags.filter((t) => t.category_id === cat.id)
+              }))
+            }
+          }))
+          if (ignore) return
+          setTableAllocations(allAllocs)
+        }
       })
       .catch((err: unknown) => {
         if (!ignore) setError(String(err))
@@ -478,6 +663,14 @@ export default function CategorySummaryPage() {
     return projects.filter((p) => p.division && selectedDivisions.has(p.division))
   }, [projects, selectedDivisions])
 
+  const allocatedCount = useMemo(() => {
+    return filteredProjects.filter((p) => {
+      const jobs = uniqueJobsFromFlat(p)
+      if (jobs.length === 0) return (tableAllocations[projectKey(p.id)] ?? []).length > 0
+      return jobs.some((j) => (tableAllocations[jobKey(p.id, j.name)] ?? []).length > 0)
+    }).length
+  }, [filteredProjects, tableAllocations])
+
   const selectStyle: React.CSSProperties = {
     background: "#fff",
     border: "1px solid #D1D5DB",
@@ -533,13 +726,6 @@ export default function CategorySummaryPage() {
                 </>
               )}
             </button>
-            <Link
-              href={`/category/${encodeURIComponent(categoryName)}/allocate`}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-              style={{ textDecoration: "none" }}
-            >
-              Allocate
-            </Link>
           </div>
         </div>
       </header>
@@ -937,10 +1123,187 @@ export default function CategorySummaryPage() {
               </table>
             </div>
 
-            <BudgetTable data={filteredProjects} years={activeYears} />
+            <BudgetTable
+              data={filteredProjects}
+              years={activeYears}
+              extraColumn={{
+                header: (
+                  <span>
+                    จัดสรร
+                    <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 400, color: "#6B7280" }}>
+                      ({allocatedCount}/{filteredProjects.length})
+                    </span>
+                  </span>
+                ),
+                cell: (project) => {
+                  const jobs = uniqueJobsFromFlat(project)
+                  // Collect all tags for this project across project-level and job-level keys
+                  const allTags: AllocationTag[] = []
+                  if (jobs.length === 0) {
+                    const t = tableAllocations[projectKey(project.id)] ?? []
+                    allTags.push(...t)
+                  } else {
+                    jobs.forEach((j) => {
+                      const t = tableAllocations[jobKey(project.id, j.name)] ?? []
+                      allTags.push(...t)
+                    })
+                  }
+                  // Use first-occurrence percentage per code (summing across jobs is meaningless)
+                  const byCode = new Map<string, number>()
+                  allTags.forEach((t) => { if (!byCode.has(t.tag_code)) byCode.set(t.tag_code, t.percentage) })
+                  const isAllocated = byCode.size > 0
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => openModal(project)}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 10px",
+                        borderRadius: 6,
+                        border: isAllocated ? "1px solid #86EFAC" : "1px solid #D1D5DB",
+                        background: isAllocated ? "#F0FDF4" : "#F9FAFB",
+                        color: isAllocated ? "#166534" : "#374151",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        fontWeight: isAllocated ? 600 : 400,
+                        textAlign: "left",
+                      }}
+                    >
+                      {isAllocated
+                        ? [...byCode.entries()].map(([code, pct]) =>
+                            jobs.length <= 1 ? `${code} ${pct.toFixed(0)}%` : code
+                          ).join(" · ")
+                        : "จัดสรร"}
+                    </button>
+                  )
+                },
+              }}
+            />
           </>
         )}
       </main>
+
+      {/* Allocation modal */}
+      {modalProject && (
+        <div
+          onClick={() => setModalProject(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ background: "#fff", borderRadius: 12, width: "100%", maxWidth: 640, maxHeight: "85vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}
+          >
+            {/* Modal header */}
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid #E5E7EB", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{modalProject.name}</div>
+                <div style={{ fontSize: 11, color: "#9CA3AF", fontFamily: "monospace" }}>{modalProject.project_code}</div>
+              </div>
+              <button onClick={() => setModalProject(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#9CA3AF", fontSize: 18, lineHeight: 1, padding: 2 }}>✕</button>
+            </div>
+
+            {/* Modal body */}
+            <div style={{ padding: "16px 20px" }}>
+              {modalLoading ? (
+                <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF", fontSize: 13 }}>Loading…</div>
+              ) : (
+                <>
+                  {catValues.length === 0 && (
+                    <div style={{ padding: "8px 12px", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 6, fontSize: 12, color: "#92400E", marginBottom: 12 }}>
+                      ยังไม่มี value ใน category นี้ — เพิ่มก่อนใน Manage page
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {modalRows.map((row) => {
+                      const alloc = modalAllocations[row.key] ?? []
+                      const isEditing = editingKey === row.key
+                      return (
+                        <Fragment key={row.key}>
+                          <div style={{ border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
+                            {/* Row header */}
+                            <div style={{ background: "#F9FAFB", padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, borderBottom: isEditing ? "1px solid #E5E7EB" : "none" }}>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{row.label}</div>
+                                <div style={{ fontSize: 11, color: "#9CA3AF" }}>Budget {fmt2(row.budget)} · Target {fmt2(row.target)}</div>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {alloc.length > 0 && !isEditing && (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                    {alloc.map((t) => (
+                                      <span key={t.id} style={{ fontSize: 11, background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE", borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>
+                                        {t.tag_code} {t.percentage}%
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {!isEditing ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => startRowEdit(row)}
+                                    disabled={catValues.length === 0}
+                                    style={{ fontSize: 11, padding: "3px 10px", background: "#EFF6FF", color: "#1D4ED8", border: "1px solid #BFDBFE", borderRadius: 5, cursor: "pointer" }}
+                                  >
+                                    {alloc.length > 0 ? "แก้ไข" : "กำหนด"}
+                                  </button>
+                                ) : (
+                                  <button type="button" onClick={() => setEditingKey(null)} style={{ fontSize: 11, color: "#9CA3AF", background: "none", border: "none", cursor: "pointer" }}>ยกเลิก</button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Inline editor */}
+                            {isEditing && (
+                              <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                                {draft.map((item, i) => (
+                                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <select
+                                      value={item.valueId}
+                                      onChange={(e) => setDraft((prev) => prev.map((d, j) => j === i ? { ...d, valueId: Number(e.target.value) } : d))}
+                                      style={{ flex: 1, border: "1px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}
+                                    >
+                                      <option value={0}>- เลือก -</option>
+                                      {catValues.map((v) => (
+                                        <option key={v.id} value={v.id}>{v.code}</option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      type="number" step="0.01" min="0" max="100"
+                                      value={item.percentage || ""}
+                                      placeholder="%"
+                                      onChange={(e) => setDraft((prev) => prev.map((d, j) => j === i ? { ...d, percentage: cleanPct(Number(e.target.value)) } : d))}
+                                      style={{ width: 64, border: "1px solid #D1D5DB", borderRadius: 6, padding: "4px 6px", fontSize: 12, textAlign: "right" }}
+                                    />
+                                    <button type="button" onClick={() => fillRemaining(i)} style={{ fontSize: 11, color: "#3B82F6", background: "none", border: "none", cursor: "pointer" }}>Fill</button>
+                                    <button type="button" onClick={() => setDraft((prev) => prev.filter((_, j) => j !== i))} style={{ fontSize: 11, color: "#EF4444", background: "none", border: "none", cursor: "pointer" }}>✕</button>
+                                  </div>
+                                ))}
+                                {draftError && <div style={{ fontSize: 11, color: "#EF4444" }}>{draftError}</div>}
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4 }}>
+                                  <button type="button" onClick={() => setDraft((prev) => [...prev, { valueId: 0, percentage: 0 }])} style={{ fontSize: 11, color: "#3B82F6", background: "none", border: "none", cursor: "pointer" }}>+ เพิ่ม value</button>
+                                  <span style={{ flex: 1 }} />
+                                  <span style={{ fontSize: 11, fontFamily: "monospace", fontWeight: 600, color: draftTotal >= 99.99 && draftTotal <= 100.01 ? "#059669" : "#6B7280" }}>{draftTotal.toFixed(2)}%</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveRowEdit(row)}
+                                    disabled={draftSaving}
+                                    style={{ fontSize: 12, padding: "4px 14px", background: "#2563EB", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}
+                                  >
+                                    {draftSaving ? "…" : "บันทึก"}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </Fragment>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
