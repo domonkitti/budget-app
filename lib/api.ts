@@ -145,12 +145,12 @@ export const api = {
   // Inline editing (live)
   createSubJob: (projectId: number, name: string, sortOrder: number | null, fundType: string, dataYear: number, budget: number, target: number) =>
     post<SubJob>("/sub-jobs", { project_id: projectId, name, sort_order: sortOrder, fund_type: fundType, data_year: dataYear, budget, target }),
-  createBudgetSource: (projectId: number, source: string, fundType: string, dataYear: number, budget: number, target: number) =>
-    post<BudgetSource>("/budget-sources", { project_id: projectId, source, fund_type: fundType, data_year: dataYear, budget, target }),
+  createBudgetSource: (projectId: number, source: string, fundType: string, dataYear: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
+    post<BudgetSource>("/budget-sources", { project_id: projectId, source, fund_type: fundType, data_year: dataYear, budget, target, cut_transfer, under_budget }),
   updateSubJob: (id: number, budget: number, target: number) =>
     put(`/sub-jobs/${id}`, { budget, target }),
-  updateBudgetSource: (id: number, budget: number, target: number) =>
-    put(`/budget-sources/${id}`, { budget, target }),
+  updateBudgetSource: (id: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
+    put(`/budget-sources/${id}`, { budget, target, cut_transfer, under_budget }),
 
   // Scenarios
   scenarios: () => get<Scenario[]>("/scenarios"),
@@ -161,10 +161,10 @@ export const api = {
   scenarioFlat: (id: number) => get<FlatProject[]>(`/scenarios/${id}/flat`),
   scenarioProjectDetail: (scenId: number, code: string) =>
     get<ProjectDetail>(`/scenarios/${scenId}/projects/${encodeURIComponent(code)}`),
-  updateScenarioSubJob: (scenId: number, sjId: number, budget: number, target: number) =>
-    put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target }),
-  updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number) =>
-    put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target }),
+  updateScenarioSubJob: (scenId: number, sjId: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
+    put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target, cut_transfer, under_budget }),
+  updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
+    put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target, cut_transfer, under_budget }),
   // Batch save
   batchSave: (req: BatchSaveRequest) => post<void>("/batch-save", req),
 

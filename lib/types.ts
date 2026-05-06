@@ -133,10 +133,10 @@ export type ChangeLogEntry = {
 export type BatchSaveRequest = {
   batch_id: string
   batch_comment: string
-  sub_job_updates: Array<{ id: number; budget: number; target: number }>
-  budget_source_updates: Array<{ id: number; budget: number; target: number }>
-  new_sub_jobs: Array<{ project_id: number; name: string; sort_order: number | null; fund_type: string; data_year: number; budget: number; target: number }>
-  new_budget_sources: Array<{ project_id: number; source: string; fund_type: string; data_year: number; budget: number; target: number }>
+  sub_job_updates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
+  budget_source_updates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
+  new_sub_jobs: Array<{ project_id: number; name: string; sort_order: number | null; fund_type: string; data_year: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
+  new_budget_sources: Array<{ project_id: number; source: string; fund_type: string; data_year: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
 }
 
 export type FilterOptions = {
@@ -165,6 +165,8 @@ export type SubJob = {
   budget: number
   target: number
   remain: number
+  cut_transfer: number
+  under_budget: number
 }
 
 export type BudgetSource = {
@@ -176,6 +178,8 @@ export type BudgetSource = {
   budget: number
   target: number
   remain: number
+  cut_transfer: number
+  under_budget: number
 }
 
 export type ProjectDetail = Project & {

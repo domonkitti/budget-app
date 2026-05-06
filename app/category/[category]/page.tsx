@@ -353,8 +353,9 @@ export default function CategorySummaryPage() {
   const [liveProjects, setLiveProjects] = useState<FlatProject[]>([])
   const [scenarioProjects, setScenarioProjects] = useState<FlatProject[] | null>(null)
   const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [] })
-  const [yearFrom, setYearFrom] = useState("")
-  const [yearTo, setYearTo] = useState("")
+  const currentBEYear = new Date().getFullYear() + 543
+  const [yearFrom, setYearFrom] = useState(String(currentBEYear))
+  const [yearTo, setYearTo] = useState(String(currentBEYear + 2))
   const [activeMetrics, setActiveMetrics] = useState<Metric[]>(["budget", "target"])
   const [selectedDivisions, setSelectedDivisions] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -401,7 +402,7 @@ export default function CategorySummaryPage() {
         const tags = await api.jobCategoryAllocations(project.id, job.name)
         allocs[key] = tags.filter((t) => t.category_id === cat.id)
         const totals = sumSubJobs(project.sub_jobs ?? [], job.name)
-        rows.push({ kind: "job", key, projectId: project.id, subJobName: job.name, label: `${idx + 1}. ${job.name}`, ...totals })
+        rows[idx] = { kind: "job", key, projectId: project.id, subJobName: job.name, label: `${idx + 1}. ${job.name}`, ...totals }
       }))
     }
 
@@ -611,40 +612,6 @@ export default function CategorySummaryPage() {
     })
   }, [activeYears, yearSummaries, valueCodes])
 
-  const aggregateSummary = useMemo(() => {
-    const map: Record<string, { budget: number; target: number; remain: number }> = {}
-    activeYears.forEach((y) => {
-      ;(yearSummaries[y] ?? []).forEach((r) => {
-        if (!map[r.code]) map[r.code] = { budget: 0, target: 0, remain: 0 }
-        map[r.code].budget += r.budget
-        map[r.code].target += r.target
-        map[r.code].remain += r.remain
-      })
-    })
-    return valueCodes.filter((code) => map[code]).map((code) => ({ code, ...map[code] }))
-  }, [activeYears, yearSummaries, valueCodes])
-
-  const totals = useMemo(
-    () =>
-      aggregateSummary.reduce(
-        (acc, r) => ({
-          budget: acc.budget + r.budget,
-          target: acc.target + r.target,
-          remain: acc.remain + r.remain,
-        }),
-        { budget: 0, target: 0, remain: 0 },
-      ),
-    [aggregateSummary],
-  )
-
-  const metricMax = useMemo(
-    () => ({
-      budget: Math.max(...aggregateSummary.map((r) => r.budget), 1),
-      target: Math.max(...aggregateSummary.map((r) => r.target), 1),
-      remain: Math.max(...aggregateSummary.map((r) => r.remain), 1),
-    }),
-    [aggregateSummary],
-  )
 
   const projects = viewMode.kind === "snapshot"
     ? viewMode.data
@@ -941,186 +908,221 @@ export default function CategorySummaryPage() {
                 </div>
               )}
 
-              {/* Summary value table */}
-              <table
-                style={{
-                  width: "100%",
-                  fontSize: 13,
-                  borderCollapse: "collapse",
-                  borderTop: "0.5px solid #E5E7EB",
-                }}
-              >
-                <thead>
-                  <tr style={{ background: "#F9FAFB" }}>
-                    <th
-                      style={{
-                        padding: "8px 16px",
-                        textAlign: "left",
-                        color: "#6B7280",
-                        fontSize: 11,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Value
-                    </th>
-                    {(["budget", "target", "remain"] as Metric[])
-                      .filter((m) => activeMetrics.includes(m))
-                      .flatMap((m) => [
+              {/* Summary value table — years as columns */}
+              {(() => {
+                const activeMetricList = (["budget", "target", "remain"] as Metric[]).filter((m) =>
+                  activeMetrics.includes(m),
+                )
+                const yearTotalsMap = Object.fromEntries(
+                  activeYears.map((y) => {
+                    const rows = yearSummaries[y] ?? []
+                    return [
+                      y,
+                      rows.reduce(
+                        (acc, r) => ({
+                          budget: acc.budget + r.budget,
+                          target: acc.target + r.target,
+                          remain: acc.remain + r.remain,
+                        }),
+                        { budget: 0, target: 0, remain: 0 },
+                      ),
+                    ]
+                  }),
+                )
+                const colCount = 1 + activeYears.length * activeMetricList.length * 2
+                const thBase: React.CSSProperties = {
+                  padding: "5px 4px",
+                  textAlign: "right",
+                  color: "#6B7280",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  whiteSpace: "nowrap",
+                }
+                return (
+                  <table
+                    style={{
+                      width: "100%",
+                      fontSize: 13,
+                      borderCollapse: "collapse",
+                      borderTop: "0.5px solid #E5E7EB",
+                    }}
+                  >
+                    <thead>
+                      {/* Row 1: year span headers */}
+                      <tr style={{ background: "#F9FAFB" }}>
                         <th
-                          key={`${m}-amt`}
+                          rowSpan={2}
                           style={{
-                            padding: "8px 12px",
-                            textAlign: "right",
-                            color: "#6B7280",
-                            fontSize: 11,
-                            fontWeight: 600,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
+                            ...thBase,
+                            textAlign: "left",
+                            padding: "5px 12px",
+                            verticalAlign: "bottom",
                           }}
                         >
-                          {METRIC_LABELS[m]}
-                        </th>,
-                        <th
-                          key={`${m}-pct`}
-                          style={{
-                            padding: "8px 12px",
-                            textAlign: "right",
-                            color: "#6B7280",
-                            fontSize: 11,
-                            fontWeight: 600,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          {METRIC_LABELS[m]} %
-                        </th>,
-                      ])}
-                  </tr>
-                </thead>
-                <tbody>
-                  {aggregateSummary.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={1 + activeMetrics.length * 2}
-                        style={{
-                          padding: "32px 16px",
-                          textAlign: "center",
-                          color: "#6B7280",
-                        }}
-                      >
-                        No allocated data yet
-                      </td>
-                    </tr>
-                  )}
-                  {aggregateSummary.map((row, i) => {
-                    const rowBg = i % 2 === 0 ? "#ffffff" : "#F9FAFB"
-                    const swatchColor = CODE_FILLS.budget[i % CODE_FILLS.budget.length]
-                    return (
-                      <tr key={row.code} style={{ background: rowBg }}>
-                        <td style={{ padding: "8px 16px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <span
-                              style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: 2,
-                                flexShrink: 0,
-                                background: swatchColor,
-                              }}
-                            />
-                            <span style={{ fontFamily: "monospace", color: "#374151" }}>
-                              {row.code}
-                            </span>
-                          </div>
-                        </td>
-                        {(["budget", "target", "remain"] as Metric[])
-                          .filter((m) => activeMetrics.includes(m))
-                          .flatMap((m) => {
-                            const pct =
-                              metricMax[m] > 0 ? (row[m] / metricMax[m]) * 100 : 0
-                            return [
-                              <td
-                                key={`${m}-amt`}
-                                style={{
-                                  padding: "8px 12px",
-                                  textAlign: "right",
-                                  fontVariantNumeric: "tabular-nums",
-                                  fontFamily: "monospace",
-                                  color: "#374151",
-                                  background: `linear-gradient(90deg, ${METRIC_BAR_RGBA[m]} ${pct}%, transparent ${pct}%)`,
-                                }}
-                              >
-                                {fmt(row[m])}
-                              </td>,
-                              <td
-                                key={`${m}-pct`}
-                                style={{
-                                  padding: "8px 12px",
-                                  textAlign: "right",
-                                  fontVariantNumeric: "tabular-nums",
-                                  fontFamily: "monospace",
-                                  color: METRIC_ACCENT[m],
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {fmtPct(row[m], totals[m])}
-                              </td>,
-                            ]
-                          })}
+                          Value
+                        </th>
+                        {activeYears.map((year) => (
+                          <th
+                            key={year}
+                            colSpan={activeMetricList.length * 2}
+                            style={{
+                              ...thBase,
+                              textAlign: "center",
+                              color: "#1D4ED8",
+                              borderLeft: "0.5px solid #E5E7EB",
+                              borderBottom: "0.5px solid #E5E7EB",
+                            }}
+                          >
+                            {year}
+                          </th>
+                        ))}
                       </tr>
-                    )
-                  })}
-                  {aggregateSummary.length > 0 && (
-                    <tr
-                      style={{
-                        background: "#F9FAFB",
-                        borderTop: "0.5px solid #D1D5DB",
-                      }}
-                    >
-                      <td
-                        style={{
-                          padding: "8px 16px",
-                          color: "#111827",
-                          fontWeight: 700,
-                        }}
-                      >
-                        Total
-                      </td>
-                      {(["budget", "target", "remain"] as Metric[])
-                        .filter((m) => activeMetrics.includes(m))
-                        .flatMap((m) => [
+                      {/* Row 2: metric + % sub-headers */}
+                      <tr style={{ background: "#F9FAFB" }}>
+                        {activeYears.flatMap((year) =>
+                          activeMetricList.flatMap((m, mi) => [
+                            <th
+                              key={`${year}-${m}-amt`}
+                              style={{
+                                ...thBase,
+                                borderLeft: mi === 0 ? "0.5px solid #E5E7EB" : undefined,
+                              }}
+                            >
+                              {METRIC_LABELS[m]}
+                            </th>,
+                            <th
+                              key={`${year}-${m}-pct`}
+                              style={{
+                                ...thBase,
+                                fontSize: 10,
+                                width: "1.8rem",
+                                color: METRIC_ACCENT[m],
+                              }}
+                            >
+                              %
+                            </th>,
+                          ]),
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {valueCodes.length === 0 && (
+                        <tr>
                           <td
-                            key={`${m}-amt`}
-                            style={{
-                              padding: "8px 12px",
-                              textAlign: "right",
-                              fontVariantNumeric: "tabular-nums",
-                              fontFamily: "monospace",
-                              color: "#111827",
-                              fontWeight: 700,
-                            }}
+                            colSpan={colCount}
+                            style={{ padding: "32px 16px", textAlign: "center", color: "#6B7280" }}
                           >
-                            {fmt(totals[m])}
-                          </td>,
+                            No allocated data yet
+                          </td>
+                        </tr>
+                      )}
+                      {valueCodes.map((code, i) => {
+                        const rowBg = i % 2 === 0 ? "#ffffff" : "#F9FAFB"
+                        const swatchColor = CODE_FILLS.budget[i % CODE_FILLS.budget.length]
+                        return (
+                          <tr key={code} style={{ background: rowBg }}>
+                            <td style={{ padding: "7px 16px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: 2,
+                                    flexShrink: 0,
+                                    background: swatchColor,
+                                  }}
+                                />
+                                <span style={{ fontFamily: "monospace", color: "#374151" }}>
+                                  {code}
+                                </span>
+                              </div>
+                            </td>
+                            {activeYears.flatMap((year, yi) => {
+                              const rows = yearSummaries[year] ?? []
+                              const row = rows.find((r) => r.code === code)
+                              const yt = yearTotalsMap[year]
+                              return activeMetricList.flatMap((m, mi) => [
+                                <td
+                                  key={`${year}-${m}-amt`}
+                                  style={{
+                                    padding: "5px 4px",
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    fontFamily: "monospace",
+                                    color: row ? "#374151" : "#D1D5DB",
+                                    borderLeft:
+                                      mi === 0 && yi > 0 ? "0.5px solid #E5E7EB" : undefined,
+                                  }}
+                                >
+                                  {row ? fmt(row[m]) : "—"}
+                                </td>,
+                                <td
+                                  key={`${year}-${m}-pct`}
+                                  style={{
+                                    padding: "5px 3px 5px 1px",
+                                    textAlign: "right",
+                                    fontVariantNumeric: "tabular-nums",
+                                    fontFamily: "monospace",
+                                    fontSize: 10,
+                                    color: row ? METRIC_ACCENT[m] : "#D1D5DB",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {row ? fmtPct(row[m], yt[m]) : "—"}
+                                </td>,
+                              ])
+                            })}
+                          </tr>
+                        )
+                      })}
+                      {valueCodes.length > 0 && (
+                        <tr style={{ background: "#F9FAFB", borderTop: "0.5px solid #D1D5DB" }}>
                           <td
-                            key={`${m}-pct`}
-                            style={{
-                              padding: "8px 12px",
-                              textAlign: "right",
-                              fontVariantNumeric: "tabular-nums",
-                              fontFamily: "monospace",
-                              color: "#6B7280",
-                            }}
+                            style={{ padding: "5px 12px", color: "#111827", fontWeight: 700 }}
                           >
-                            100%
-                          </td>,
-                        ])}
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                            Total
+                          </td>
+                          {activeYears.flatMap((year, yi) => {
+                            const yt = yearTotalsMap[year]
+                            return activeMetricList.flatMap((m, mi) => [
+                              <td
+                                key={`${year}-${m}-amt`}
+                                style={{
+                                  padding: "5px 4px",
+                                  textAlign: "right",
+                                  fontVariantNumeric: "tabular-nums",
+                                  fontFamily: "monospace",
+                                  color: "#111827",
+                                  fontWeight: 700,
+                                  borderLeft:
+                                    mi === 0 && yi > 0 ? "0.5px solid #E5E7EB" : undefined,
+                                }}
+                              >
+                                {fmt(yt[m])}
+                              </td>,
+                              <td
+                                key={`${year}-${m}-pct`}
+                                style={{
+                                  padding: "5px 3px 5px 1px",
+                                  textAlign: "right",
+                                  fontVariantNumeric: "tabular-nums",
+                                  fontFamily: "monospace",
+                                  fontSize: 10,
+                                  color: "#6B7280",
+                                }}
+                              >
+                                100%
+                              </td>,
+                            ])
+                          })}
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                )
+              })()}
             </div>
 
             <BudgetTable
