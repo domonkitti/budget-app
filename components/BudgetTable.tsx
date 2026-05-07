@@ -111,7 +111,7 @@ function workbookSafeName(value: string) {
 }
 
 function excelMoney(n: number) {
-  return Number((n / 1_000_000).toFixed(3))
+  return Number(n.toFixed(3))
 }
 
 // ─── Dropdown primitives ────────────────────────────────────────────────────

@@ -49,7 +49,7 @@ type AllocationRow =
       remain: number
     }
 
-const fmt = (n: number) => (n / 1_000_000).toFixed(2) + "M"
+const fmt = (n: number) => n.toFixed(2) + "M"
 const fmtMoney = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 })
 const BAR_COLORS = {
   budget: "#3b82f6",
@@ -132,7 +132,7 @@ function keyToSelection(key: string, categoryId: number): CategoryAllocationSele
 function moneyFromMillionInput(value: string) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return 0
-  return parsed * 1_000_000
+  return parsed
 }
 
 function cleanPercentage(value: number) {
@@ -847,7 +847,7 @@ export default function CategoryPage() {
                 <ResponsiveContainer width="100%" height={230}>
                   <BarChart data={chartData} margin={{ top: 4, right: 24, left: 0, bottom: 4 }}>
                     <XAxis dataKey="code" tick={{ fontSize: 12 }} />
-                    <YAxis tickFormatter={value => (value / 1_000_000).toFixed(0) + "M"} tick={{ fontSize: 11 }} width={52} />
+                    <YAxis tickFormatter={value => Number(value).toFixed(1) + "M"} tick={{ fontSize: 11 }} width={52} />
                     <Tooltip formatter={value => fmt(Number(value))} />
                     <Legend />
                     <Bar dataKey="budget" name="งบเงินดำเนินการปี" fill={BAR_COLORS.budget} radius={[3, 3, 0, 0]} />

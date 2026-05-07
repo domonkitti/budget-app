@@ -73,7 +73,7 @@ const CODE_FILLS: Record<Metric, string[]> = {
   remain: ["#BFDBFE","#A7F3D0","#FECACA","#FDE68A","#DDD6FE","#FED7AA","#BAE6FD","#F5D0FE"],
 }
 
-const fmt = (n: number) => (n / 1_000_000).toFixed(2) + "M"
+const fmt = (n: number) => n.toFixed(2) + "M"
 const fmtPct = (n: number, total: number) =>
   total === 0 ? "-" : ((n / total) * 100).toFixed(1) + "%"
 
@@ -467,7 +467,7 @@ export default function CategorySummaryPage() {
 
   const draftTotal = draft.reduce((s, d) => s + (d.percentage || 0), 0)
 
-  const fmt2 = (n: number) => (n / 1_000_000).toFixed(2) + "M"
+  const fmt2 = (n: number) => n.toFixed(2) + "M"
 
   async function handleExport() {
     setExporting(true)

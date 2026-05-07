@@ -1,6 +1,6 @@
 import type { CategorySummaryRow, FlatProject } from "./types"
 
-const M = (n: number) => Number((n / 1_000_000).toFixed(3))
+const M = (n: number) => Number(n.toFixed(3))
 
 function projectMetric(
   project: FlatProject,
