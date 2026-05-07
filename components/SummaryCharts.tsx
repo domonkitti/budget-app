@@ -6,7 +6,7 @@ import type { FlatProject } from "@/lib/types"
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"]
 
 function fmt(n: number) {
-  return (n / 1e6).toFixed(1) + "M"
+  return n.toFixed(1) + "M"
 }
 
 function projectSum(p: FlatProject) {
@@ -64,7 +64,7 @@ export default function SummaryCharts({ data }: Props) {
         <ResponsiveContainer width="100%" height={150}>
           <BarChart data={byDivision} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
             <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-            <YAxis tickFormatter={v => (v / 1e6).toFixed(0)} tick={{ fontSize: 10 }} />
+            <YAxis tickFormatter={v => Number(v).toFixed(0)} tick={{ fontSize: 10 }} />
             <Tooltip formatter={(v) => fmt(Number(v))} />
             <Bar dataKey="budget" fill="#3b82f6" name="Budget" radius={[3, 3, 0, 0]} />
             <Bar dataKey="target" fill="#10b981" name="Target" radius={[3, 3, 0, 0]} />

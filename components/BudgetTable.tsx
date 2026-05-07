@@ -15,6 +15,16 @@ const GROUPS = [
   { key: "Remain", label: "คงเหลือ" },
 ] as const
 
+const HMWAT_ORDER = [
+  "หมวดสิ่งก่อสร้าง",
+  "หมวดเครื่องจักรอุปกรณ์",
+  "หมวดเครื่องใช้สำนักงานและเครื่องมือเครื่องใช้ขนาดเล็ก",
+  "หมวดวิจัยและพัฒนา",
+  "หมวดลงทุนอื่นๆ",
+  "หมวดสำรองราคา",
+  "หมวดสำรองกรณีจำเป็นเร่งด่วน",
+]
+
 type Group = (typeof GROUPS)[number]["key"]
 type FundType = "ผูกพัน" | "ลงทุน"
 type FundColumnKey = (typeof FUND_COLUMNS)[number]["key"]
@@ -86,6 +96,14 @@ function sourceRank(source: string) {
   ]
   const idx = order.indexOf(source)
   return idx === -1 ? order.length : idx
+}
+
+function sumProjects(projects: FlatProject[], year: number, fundType: FundType | null, group: Group) {
+  return projects.reduce((s, p) => s + getVal(p.source_breakdown, year, null, fundType, group), 0)
+}
+
+function sumProjectsBySource(projects: FlatProject[], year: number, source: string, fundType: FundType | null, group: Group) {
+  return projects.reduce((s, p) => s + getVal(p.source_breakdown, year, source, fundType, group), 0)
 }
 
 function filterKey(year: number, group: Group, fundKey: FundColumnKey) {
@@ -390,6 +408,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const [selNames, setSelNames] = useState<Set<string>>(new Set())
   const [selCodes, setSelCodes] = useState<Set<string>>(new Set())
   const [selDivisions, setSelDivisions] = useState<Set<string>>(new Set())
+  const [selDepartments, setSelDepartments] = useState<Set<string>>(new Set())
+  const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
   const [selTypes, setSelTypes] = useState<Set<string>>(new Set())
   const [selYears, setSelYears] = useState<Set<string>>(new Set())
   const [selDisplayYears, setSelDisplayYears] = useState<Set<string>>(new Set())
@@ -400,6 +420,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const [infoVis, setInfoVis] = useState({
     code: false,
     division: false,
+    department: false,
+    group: false,
     type: false,
     year: false,
   })
@@ -435,6 +457,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const allNames = useMemo(() => [...new Set(data.map((r) => r.name))].sort((a, b) => a.localeCompare(b, "th")), [data])
   const allCodes = useMemo(() => [...new Set(data.map((r) => r.project_code))].sort(), [data])
   const allDivisions = useMemo(() => [...new Set(data.map((r) => r.division ?? ""))].sort(), [data])
+  const allDepartments = useMemo(() => [...new Set(data.map((r) => r.department ?? ""))].sort(), [data])
+  const allGroups = useMemo(() => [...new Set(data.map((r) => r.group_name ?? ""))].sort(), [data])
   const allTypes = useMemo(() => [...new Set(data.map((r) => r.project_type))].sort(), [data])
   const allStartYears = useMemo(
     () => [...new Set(data.map((r) => String(r.year)))].sort(),
@@ -447,6 +471,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     2 +
     Number(infoVis.code) +
     Number(infoVis.division) +
+    Number(infoVis.department) +
+    Number(infoVis.group) +
     Number(infoVis.type) +
     Number(infoVis.year)
   const hasMoneyColumns = visibleGroups.length > 0 && visibleFunds.length > 0
@@ -485,6 +511,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       if (selNames.size > 0 && !selNames.has(row.name)) return false
       if (selCodes.size > 0 && !selCodes.has(row.project_code)) return false
       if (selDivisions.size > 0 && !selDivisions.has(row.division ?? "")) return false
+      if (selDepartments.size > 0 && !selDepartments.has(row.department ?? "")) return false
+      if (selGroups.size > 0 && !selGroups.has(row.group_name ?? "")) return false
       if (selTypes.size > 0 && !selTypes.has(row.project_type)) return false
       if (selYears.size > 0 && !selYears.has(String(row.year))) return false
       if (
@@ -504,7 +532,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
         return true
       })
     })
-  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selTypes, selYears, selDisplayYears, visibleFunds, visibleGroups])
+  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selDepartments, selGroups, selTypes, selYears, selDisplayYears, visibleFunds, visibleGroups])
 
   const sorted = useMemo(() => {
     if (!sortState) return filtered
@@ -541,6 +569,46 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       return sortState.dir === "asc" ? av - bv : bv - av
     })
   }, [filtered, fundVis, groupVis, sortState])
+
+  type RenderedItem =
+    | { kind: "project"; row: FlatProject }
+    | { kind: "group-total"; label: string; projects: FlatProject[] }
+    | { kind: "type-total"; label: string; projects: FlatProject[]; bg: string; color: string }
+
+  const renderedItems = useMemo((): RenderedItem[] => {
+    const items: RenderedItem[] = []
+    type Seg = { type: string; rows: FlatProject[] }
+    const segments: Seg[] = []
+    for (const row of sorted) {
+      const last = segments[segments.length - 1]
+      if (!last || last.type !== row.project_type) segments.push({ type: row.project_type, rows: [row] })
+      else last.rows.push(row)
+    }
+    for (const seg of segments) {
+      if (seg.type === "Y") {
+        type HmwatSeg = { group: string; rows: FlatProject[] }
+        const hmwatSegs: HmwatSeg[] = []
+        for (const row of seg.rows) {
+          const g = row.group_name ?? ""
+          const last = hmwatSegs[hmwatSegs.length - 1]
+          if (!last || last.group !== g) hmwatSegs.push({ group: g, rows: [row] })
+          else last.rows.push(row)
+        }
+        for (const hs of hmwatSegs) {
+          for (const row of hs.rows) items.push({ kind: "project", row })
+          items.push({ kind: "group-total", label: hs.group, projects: hs.rows })
+        }
+        items.push({ kind: "type-total", label: "รวมงานรายปี (Y)", projects: seg.rows, bg: "#DBEAFE", color: "#1E3A8A" })
+      } else {
+        for (const row of seg.rows) items.push({ kind: "project", row })
+        const label = seg.type === "C" ? "รวมแผนระยะยาว (C)" : seg.type === "L" ? "รวมสัญญาเช่า (L)" : `รวม${seg.type}`
+        const bg = seg.type === "C" ? "#D1FAE5" : "#FDE68A"
+        const color = seg.type === "C" ? "#065F46" : "#92400E"
+        items.push({ kind: "type-total", label, projects: seg.rows, bg, color })
+      }
+    }
+    return items
+  }, [sorted])
 
   function cycleItemSort() {
     setSortState((current) => {
@@ -630,6 +698,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       "รายการ",
       ...(infoVis.code ? ["Code"] : []),
       ...(infoVis.division ? ["Division"] : []),
+      ...(infoVis.department ? ["Department"] : []),
+      ...(infoVis.group ? ["Group"] : []),
       ...(infoVis.type ? ["Type"] : []),
       ...(infoVis.year ? ["Start Year"] : []),
     ]
@@ -657,6 +727,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
         name,
         ...(infoVis.code ? [row.project_code] : []),
         ...(infoVis.division ? [row.division ?? ""] : []),
+        ...(infoVis.department ? [row.department ?? ""] : []),
+        ...(infoVis.group ? [row.group_name ?? ""] : []),
         ...(infoVis.type ? [row.project_type] : []),
         ...(infoVis.year ? [row.year] : []),
       ]
@@ -713,6 +785,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       { wch: 55 },
       ...(infoVis.code ? [{ wch: 14 }] : []),
       ...(infoVis.division ? [{ wch: 14 }] : []),
+      ...(infoVis.department ? [{ wch: 14 }] : []),
+      ...(infoVis.group ? [{ wch: 14 }] : []),
       ...(infoVis.type ? [{ wch: 8 }] : []),
       ...(infoVis.year ? [{ wch: 10 }] : []),
       ...moneyHeaders.map(() => ({ wch: 16 })),
@@ -786,6 +860,84 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     }
   }
 
+  function renderTotalBlock(
+    key: string,
+    label: string,
+    projects: FlatProject[],
+    bg: string,
+    color: string,
+    bold: boolean,
+  ) {
+    const cellStyle: React.CSSProperties = {
+      border,
+      padding: "4px 8px",
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums",
+      whiteSpace: "nowrap",
+      fontSize: 12,
+      color,
+      background: bg,
+      fontWeight: bold ? 700 : 600,
+    }
+    const srcCellStyle: React.CSSProperties = { ...cellStyle, fontWeight: 400 }
+    return (
+      <Fragment key={key}>
+        <tr style={{ background: bg }}>
+          <td style={{ ...infoCell(0), background: bg, color, fontWeight: bold ? 700 : 600, width: 44, textAlign: "center" }} />
+          <td style={{ ...infoCell(44), background: bg, color, fontWeight: bold ? 700 : 600, minWidth: 360, maxWidth: 360, whiteSpace: "normal", wordBreak: "break-word" }}>
+            {label}
+          </td>
+          {extraColumn && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.code && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.division && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.department && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.group && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.type && <td style={{ ...infoCell(), background: bg }} />}
+          {infoVis.year && <td style={{ ...infoCell(), background: bg }} />}
+          {hasMoneyColumns && displayYears.map((year) => (
+            <Fragment key={year}>
+              {visibleGroups.map((group) => (
+                <Fragment key={`${key}-${year}-${group.key}`}>
+                  {visibleFunds.map((column) => {
+                    const val = sumProjects(projects, year, column.fundType, group.key)
+                    return <td key={column.key} style={cellStyle}>{fmt(val)}</td>
+                  })}
+                </Fragment>
+              ))}
+            </Fragment>
+          ))}
+        </tr>
+        {showSources && sources.map((source) => (
+          <tr key={`${key}-src-${source}`} style={{ background: bg }}>
+            <td style={{ ...infoCell(0), width: 44, background: bg }} />
+            <td style={{ ...infoCell(44), paddingLeft: 24, background: bg, color, fontStyle: "italic", fontWeight: 400, maxWidth: 360, whiteSpace: "normal", wordBreak: "break-word" }}>
+              – {source}
+            </td>
+            {extraColumn && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.code && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.division && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.department && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.group && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.type && <td style={{ ...infoCell(), background: bg }} />}
+            {infoVis.year && <td style={{ ...infoCell(), background: bg }} />}
+            {hasMoneyColumns && displayYears.map((year) => (
+              <Fragment key={year}>
+                {visibleGroups.map((group) => (
+                  <Fragment key={`${key}-src-${source}-${year}-${group.key}`}>
+                    {visibleFunds.map((column) => {
+                      const val = sumProjectsBySource(projects, year, source, column.fundType, group.key)
+                      return <td key={column.key} style={srcCellStyle}>{fmt(val)}</td>
+                    })}
+                  </Fragment>
+                ))}
+              </Fragment>
+            ))}
+          </tr>
+        ))}
+      </Fragment>
+    )
+  }
+
   return (
     <div
       style={{
@@ -822,6 +974,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           {([
             { key: "code" as const, label: "Code" },
             { key: "division" as const, label: "Division" },
+            { key: "department" as const, label: "Department" },
+            { key: "group" as const, label: "Group" },
             { key: "type" as const, label: "Type" },
             { key: "year" as const, label: "Start year" },
           ]).map(({ key, label }) => (
@@ -928,6 +1082,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                   top: 33,
                   zIndex: 5,
                   minWidth: 360,
+                  maxWidth: 360,
                   left: 44,
                   position: "sticky",
                   textAlign: "center",
@@ -945,6 +1100,12 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               )}
               {infoVis.division && (
                 <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Division</th>
+              )}
+              {infoVis.department && (
+                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Department</th>
+              )}
+              {infoVis.group && (
+                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Group</th>
               )}
               {infoVis.type && (
                 <th style={{ ...thBase, top: 33, zIndex: 4, width: 44 }}>Type</th>
@@ -1050,6 +1211,16 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                   <PivotFilter allValues={allDivisions} selected={selDivisions} onChange={setSelDivisions} />
                 </th>
               )}
+              {infoVis.department && (
+                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                  <PivotFilter allValues={allDepartments} selected={selDepartments} onChange={setSelDepartments} />
+                </th>
+              )}
+              {infoVis.group && (
+                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                  <PivotFilter allValues={allGroups} selected={selGroups} onChange={setSelGroups} />
+                </th>
+              )}
               {infoVis.type && (
                 <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allTypes} selected={selTypes} onChange={setSelTypes} />
@@ -1142,12 +1313,20 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 </td>
               </tr>
             ) : (
-              sorted.map((row, rowIdx) => (
+              renderedItems.map((item) => {
+                  if (item.kind === "group-total") {
+                    return renderTotalBlock(`group-${item.label}`, `รวม${item.label}`, item.projects, "#F0F9FF", "#0369A1", false)
+                  }
+                  if (item.kind === "type-total") {
+                    return renderTotalBlock(`type-${item.label}`, item.label, item.projects, item.bg, item.color, true)
+                  }
+                  const row = item.row
+                  return (
                 <Fragment key={row.project_code}>
                   <tr
                     style={{
                       background: "#F8FAFC",
-                      boxShadow: rowIdx === 0 ? undefined : "inset 0 1px 0 #D1D5DB",
+                      boxShadow: "inset 0 1px 0 #D1D5DB",
                     }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#EEF2FF")
@@ -1171,6 +1350,9 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         ...infoCell(44, "project"),
                         verticalAlign: "top",
                         minWidth: 360,
+                        maxWidth: 360,
+                        whiteSpace: "normal",
+                        wordBreak: "break-word",
                       }}
                     >
                       <Link
@@ -1195,6 +1377,16 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                     {infoVis.division && (
                       <td style={{ ...infoCell(undefined, "project"), verticalAlign: "top" }}>
                         {row.division ?? "-"}
+                      </td>
+                    )}
+                    {infoVis.department && (
+                      <td style={{ ...infoCell(undefined, "project"), verticalAlign: "top" }}>
+                        {row.department ?? "-"}
+                      </td>
+                    )}
+                    {infoVis.group && (
+                      <td style={{ ...infoCell(undefined, "project"), verticalAlign: "top" }}>
+                        {row.group_name ?? "-"}
                       </td>
                     )}
                     {infoVis.type && (
@@ -1254,6 +1446,9 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                             paddingLeft: 24,
                             verticalAlign: "top",
                             color: "#6B7280",
+                            maxWidth: 360,
+                            whiteSpace: "normal",
+                            wordBreak: "break-word",
                           }}
                         >
                           {index + 1}. {subJob.name}
@@ -1261,6 +1456,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         {extraColumn && <td style={infoCell()} />}
                         {infoVis.code && <td style={infoCell()} />}
                         {infoVis.division && <td style={infoCell()} />}
+                        {infoVis.department && <td style={infoCell()} />}
+                        {infoVis.group && <td style={infoCell()} />}
                         {infoVis.type && <td style={infoCell()} />}
                         {infoVis.year && <td style={infoCell()} />}
                         {hasMoneyColumns &&
@@ -1314,6 +1511,9 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                             verticalAlign: "top",
                             color: "#6B7280",
                             fontStyle: "italic",
+                            maxWidth: 360,
+                            whiteSpace: "normal",
+                            wordBreak: "break-word",
                           }}
                         >
                           – {source}
@@ -1321,6 +1521,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         {extraColumn && <td style={infoCell()} />}
                         {infoVis.code && <td style={infoCell()} />}
                         {infoVis.division && <td style={infoCell()} />}
+                        {infoVis.department && <td style={infoCell()} />}
+                        {infoVis.group && <td style={infoCell()} />}
                         {infoVis.type && <td style={infoCell()} />}
                         {infoVis.year && <td style={infoCell()} />}
                         {hasMoneyColumns &&
@@ -1354,7 +1556,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                       </tr>
                     ))}
                 </Fragment>
-              ))
+                  )
+                })
             )}
           </tbody>
         </table>

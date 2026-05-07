@@ -155,7 +155,7 @@ export default function CategoryPage() {
   const [chartData, setChartData] = useState<CategorySummaryRow[]>([])
   const [projects, setProjects] = useState<FlatProject[]>([])
   const [allocations, setAllocations] = useState<Record<string, AllocationTag[]>>({})
-  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [] })
+  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [], divisions: [], departments: [], groups: [] })
   const [search, setSearch] = useState("")
   const [year, setYear] = useState("")
   const [source, setSource] = useState("")

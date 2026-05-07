@@ -11,11 +11,14 @@ export default function Home() {
   const { viewMode } = useViewMode()
   const [liveData, setLiveData] = useState<FlatProject[]>([])
   const [scenarioData, setScenarioData] = useState<FlatProject[] | null>(null)
-  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [] })
+  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [], divisions: [], departments: [], groups: [] })
   const currentBEYear = new Date().getFullYear() + 543
   const [yearFrom, setYearFrom] = useState(String(currentBEYear))
   const [yearTo, setYearTo] = useState(String(currentBEYear + 2))
   const [source, setSource] = useState("")
+  const [division, setDivision] = useState("")
+  const [department, setDepartment] = useState("")
+  const [group, setGroup] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -61,6 +64,9 @@ export default function Home() {
     setLoading(true)
     const params: Record<string, string> = {}
     if (source) params.source = source
+    if (division) params.division = division
+    if (department) params.department = department
+    if (group) params.group = group
     if (activeYears.length > 0) {
       params.years = activeYears.join(",")
       params.active_only = "true"
@@ -70,7 +76,7 @@ export default function Home() {
       .catch((e) => { if (!ignore) setError(e.message) })
       .finally(() => { if (!ignore) setLoading(false) })
     return () => { ignore = true }
-  }, [activeYears, source, viewMode.kind])
+  }, [activeYears, source, division, department, group, viewMode.kind])
 
   // Load scenario flat data when entering scenario mode
   useEffect(() => {
@@ -167,6 +173,27 @@ export default function Home() {
           </select>
         </div>
         <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Division</label>
+          <select className="border rounded-lg px-2 py-1 text-sm" value={division} disabled={isFiltered} onChange={(e) => setDivision(e.target.value)}>
+            <option value="">All</option>
+            {options.divisions.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Department</label>
+          <select className="border rounded-lg px-2 py-1 text-sm" value={department} disabled={isFiltered} onChange={(e) => setDepartment(e.target.value)}>
+            <option value="">All</option>
+            {options.departments.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Group</label>
+          <select className="border rounded-lg px-2 py-1 text-sm" value={group} disabled={isFiltered} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">All</option>
+            {options.groups.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
           <label className="text-xs text-gray-500">Source</label>
           <select
             className="border rounded-lg px-2 py-1 text-sm"
@@ -178,9 +205,9 @@ export default function Home() {
             {options.sources.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        {source && !isFiltered && (
-          <button onClick={() => setSource("")} className="text-xs text-gray-400 hover:text-gray-600 underline">
-            Clear
+        {(source || division || department || group) && !isFiltered && (
+          <button onClick={() => { setSource(""); setDivision(""); setDepartment(""); setGroup("") }} className="text-xs text-gray-400 hover:text-gray-600 underline">
+            Clear filters
           </button>
         )}
         {(yearFrom !== String(currentBEYear) || yearTo !== String(currentBEYear + 2)) && !isFiltered && (

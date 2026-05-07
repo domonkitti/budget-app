@@ -42,6 +42,16 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(BASE + path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 async function del(path: string): Promise<void> {
   const res = await fetch(BASE + path, { method: "DELETE" })
   if (!res.ok) throw new Error(await res.text())
@@ -52,6 +62,8 @@ export const api = {
     get<Project[]>("/projects", params),
   projectDetail: (code: string) =>
     get<ProjectDetail>(`/projects/${code}`),
+  updateProjectInfo: (code: string, data: { name: string; item_no: string | null; year: number; project_type: string; division: string | null; department: string | null; group_name: string | null }) =>
+    patchJson<{ ok: string }>(`/projects/${code}`, data),
   filterOptions: () => get<FilterOptions>("/filter-options"),
   flatProjects: (params?: Record<string, string>) =>
     get<FlatProject[]>("/projects/flat", params),

@@ -23,6 +23,8 @@ export type FlatProject = {
   item_no: string | null
   name: string
   division: string | null
+  department: string | null
+  group_name: string | null
   project_type: string
   year: number
   sub_jobs: SubJobYearEntry[]
@@ -142,6 +144,9 @@ export type BatchSaveRequest = {
 export type FilterOptions = {
   years: number[]
   sources: string[]
+  divisions: string[]
+  departments: string[]
+  groups: string[]
 }
 
 export type Project = {
@@ -153,6 +158,7 @@ export type Project = {
   name: string
   division: string | null
   department: string | null
+  group_name: string | null
 }
 
 export type SubJob = {

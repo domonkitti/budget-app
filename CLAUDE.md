@@ -84,4 +84,4 @@ api.updateBatchComment(batchId, comment)
 - `TagCategory`, `TagValue`, `ProjectTag`, `SubJobTag`, `CategoryAllocationSelection`
 - `BatchSaveRequest` — bulk edit payload
 - `ChangeLogEntry`
-- `FilterOptions` — `{ years: number[], sources: string[] }`
+- `FilterOptions` — `{ years: number[], sources: string[], divisions: string[], departments: string[], groups: string[] }`

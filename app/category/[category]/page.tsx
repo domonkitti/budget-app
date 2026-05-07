@@ -352,7 +352,7 @@ export default function CategorySummaryPage() {
   const [yearSummaries, setYearSummaries] = useState<Record<number, CategorySummaryRow[]>>({})
   const [liveProjects, setLiveProjects] = useState<FlatProject[]>([])
   const [scenarioProjects, setScenarioProjects] = useState<FlatProject[] | null>(null)
-  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [] })
+  const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [], divisions: [], departments: [], groups: [] })
   const currentBEYear = new Date().getFullYear() + 543
   const [yearFrom, setYearFrom] = useState(String(currentBEYear))
   const [yearTo, setYearTo] = useState(String(currentBEYear + 2))
@@ -493,7 +493,7 @@ export default function CategorySummaryPage() {
     setLoading(true)
     Promise.all([
       api.categories(),
-      api.filterOptions().catch(() => ({ years: [], sources: [] } as FilterOptions)),
+      api.filterOptions().catch(() => ({ years: [], sources: [], divisions: [], departments: [], groups: [] } as FilterOptions)),
       api.flatProjects(),
     ])
       .then(async ([cats, opts, flat]) => {

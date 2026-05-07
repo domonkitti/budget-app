@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useState, useCallback } from "react"
+import { Fragment, useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { api } from "@/lib/api"
@@ -140,6 +140,62 @@ export default function ProjectPage() {
   // Save bar
   const [saveComment, setSaveComment] = useState("")
 
+  // Info editing
+  const [editingInfo, setEditingInfo] = useState(false)
+  const [infoForm, setInfoForm] = useState({ name: "", item_no: "", year: "", project_type: "", division: "", department: "", group_name: "" })
+  const [savingInfo, setSavingInfo] = useState(false)
+
+  function startEditInfo() {
+    if (!project) return
+    setInfoForm({
+      name: project.name,
+      item_no: project.item_no ?? "",
+      year: String(project.year),
+      project_type: project.project_type,
+      division: project.division ?? "",
+      department: project.department ?? "",
+      group_name: project.group_name ?? "",
+    })
+    setEditingInfo(true)
+  }
+
+  async function saveInfo() {
+    if (!project) return
+    setSavingInfo(true)
+    try {
+      await api.updateProjectInfo(project.project_code, {
+        name: infoForm.name.trim(),
+        item_no: infoForm.item_no.trim() || null,
+        year: parseInt(infoForm.year),
+        project_type: infoForm.project_type,
+        division: infoForm.division.trim() || null,
+        department: infoForm.department.trim() || null,
+        group_name: infoForm.group_name.trim() || null,
+      })
+      setEditingInfo(false)
+      setLoading(true)
+      await load()
+    } catch (e: unknown) { setError(String(e)) }
+    finally { setSavingInfo(false) }
+  }
+
+  // Shared scroll sync between the two tables
+  const sjScrollRef = useRef<HTMLDivElement>(null)
+  const bsScrollRef = useRef<HTMLDivElement>(null)
+  const scrollSyncing = useRef(false)
+  function onSjScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (scrollSyncing.current) return
+    scrollSyncing.current = true
+    if (bsScrollRef.current) bsScrollRef.current.scrollLeft = e.currentTarget.scrollLeft
+    scrollSyncing.current = false
+  }
+  function onBsScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (scrollSyncing.current) return
+    scrollSyncing.current = true
+    if (sjScrollRef.current) sjScrollRef.current.scrollLeft = e.currentTarget.scrollLeft
+    scrollSyncing.current = false
+  }
+
   const load = useCallback(async () => {
     try {
       const p = isScenario && scenarioId != null
@@ -157,6 +213,7 @@ export default function ProjectPage() {
 
   useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
+
 
   function historyFieldLabel(field: string) {
     if (field === "budget") return "งบเงินดำเนินการ"
@@ -684,7 +741,7 @@ export default function ProjectPage() {
       <thead>
         {/* Row 1 — year spans */}
         <tr>
-          <th style={{ ...th, minWidth: 200, position: "sticky", left: 0, zIndex: 3, background: "#F9FAFB" }} rowSpan={3}>ชื่อ</th>
+          <th style={{ ...th, width: 200, minWidth: 200, maxWidth: 200, position: "sticky", left: 0, zIndex: 3, background: "#F9FAFB" }} rowSpan={3}>ชื่อ</th>
           {allYears.map(year => (
             <th key={year} colSpan={COLS_PER_YEAR} style={{ ...th, background: "#F3F4F6", borderBottom: "none" }}>ปี {year}</th>
           ))}
@@ -740,7 +797,7 @@ export default function ProjectPage() {
     )
     return (
       <tr key={groupName} style={{ background: "#fff" }}>
-        <td style={{ ...td(), fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1 }}>{groupName}</td>
+        <td style={{ ...td(), fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1, width: 200, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>{groupName}</td>
         {allYears.map(year => {
           const yd = years.find(y => y.year === year)
           const committed = yd?.committed ?? null
@@ -786,7 +843,7 @@ export default function ProjectPage() {
     const na = (k: string) => <td key={k} style={{ ...td(), textAlign: "right", color: "#D1D5DB", background: "#F0FDF4" }}>—</td>
     return (
       <tr style={{ background: "#F0FDF4", borderTop: "1.5px solid #86EFAC" }}>
-        <td style={{ ...td(), fontWeight: 700, color: "#166534", position: "sticky", left: 0, background: "#F0FDF4", zIndex: 1 }}>รวมทั้งหมด</td>
+        <td style={{ ...td(), fontWeight: 700, color: "#166534", position: "sticky", left: 0, background: "#F0FDF4", zIndex: 1, width: 200, maxWidth: 200, whiteSpace: "normal" }}>รวมทั้งหมด</td>
         {allYears.map(year => {
           const { sc_b, si_b, sc_t, si_t, total_ct, total_ub } = totalFn(year)
           const tb = sc_b + si_b; const tt = sc_t + si_t
@@ -824,19 +881,88 @@ export default function ProjectPage() {
         <Link href="/" style={{ color: "#9CA3AF", fontSize: 12, textDecoration: "none" }}>← Back to dashboard</Link>
         {project && (
           <div className="mt-1 flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <h1 className="text-xl font-bold text-gray-800">{project.name}</h1>
-                {modeBadge}
+            {editingInfo ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>ชื่อโครงการ</span>
+                    <input value={infoForm.name} onChange={e => setInfoForm(f => ({ ...f, name: e.target.value }))}
+                      style={{ fontSize: 14, fontWeight: 700, border: "1.5px solid #3B82F6", borderRadius: 6, padding: "4px 8px", width: 400, outline: "none" }} />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>ข้อที่</span>
+                    <input value={infoForm.item_no} onChange={e => setInfoForm(f => ({ ...f, item_no: e.target.value }))}
+                      placeholder="–"
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 80, outline: "none" }} />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>ปี</span>
+                    <input type="number" value={infoForm.year} onChange={e => setInfoForm(f => ({ ...f, year: e.target.value }))}
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 90, outline: "none" }} />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>ประเภท</span>
+                    <select value={infoForm.project_type} onChange={e => setInfoForm(f => ({ ...f, project_type: e.target.value }))}
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", outline: "none" }}>
+                      <option value="Y">Y — รายปี</option>
+                      <option value="C">C — แผนงานระยะยาว</option>
+                      <option value="L">L — สัญญาเช่า</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>Division</span>
+                    <input value={infoForm.division} onChange={e => setInfoForm(f => ({ ...f, division: e.target.value }))}
+                      placeholder="–"
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 160, outline: "none" }} />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>Department</span>
+                    <input value={infoForm.department} onChange={e => setInfoForm(f => ({ ...f, department: e.target.value }))}
+                      placeholder="–"
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 160, outline: "none" }} />
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>Group</span>
+                    <input value={infoForm.group_name} onChange={e => setInfoForm(f => ({ ...f, group_name: e.target.value }))}
+                      placeholder="–"
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 160, outline: "none" }} />
+                  </label>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" disabled={savingInfo} onClick={saveInfo}
+                    style={{ padding: "5px 16px", background: savingInfo ? "#9CA3AF" : "#3B82F6", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: savingInfo ? "default" : "pointer" }}>
+                    {savingInfo ? "Saving…" : "Save"}
+                  </button>
+                  <button type="button" onClick={() => setEditingInfo(false)}
+                    style={{ padding: "5px 14px", background: "transparent", color: "#6B7280", border: "1px solid #D1D5DB", borderRadius: 6, fontSize: 12, cursor: "pointer" }}>
+                    Cancel
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
-                <span className="font-mono">{project.project_code}</span>
-                {project.item_no && <span>ข้อ {project.item_no}</span>}
-                <span>ปี {project.year}</span>
-                <span>ประเภท {project.project_type}</span>
-                {project.division && <span>{project.division}</span>}
+            ) : (
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <h1 className="text-xl font-bold text-gray-800">{project.name}</h1>
+                  {modeBadge}
+                  {!isScenario && (
+                    <button type="button" onClick={startEditInfo}
+                      title="Edit project info"
+                      style={{ padding: "2px 8px", fontSize: 11, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, cursor: "pointer" }}>
+                      Edit
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
+                  <span className="font-mono">{project.project_code}</span>
+                  {project.item_no && <span>ข้อ {project.item_no}</span>}
+                  <span>ปี {project.year}</span>
+                  <span>ประเภท {project.project_type}</span>
+                  {project.division && <span>{project.division}</span>}
+                  {project.department && <span>{project.department}</span>}
+                  {project.group_name && <span>{project.group_name}</span>}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </header>
@@ -877,7 +1003,7 @@ export default function ProjectPage() {
             <section>
               <h2 className="text-sm font-semibold text-gray-700 mb-2">งานย่อย (Sub Jobs)</h2>
               <div className="bg-white border rounded-xl overflow-hidden">
-                <div style={{ overflowX: "auto" }} data-scroll-container="">
+                <div ref={sjScrollRef} style={{ overflowX: "auto" }} data-scroll-container="" onScroll={onSjScroll}>
                   <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse" }}>
                     {makeTableHeader()}
                     <tbody>
@@ -894,7 +1020,7 @@ export default function ProjectPage() {
             <section>
               <h2 className="text-sm font-semibold text-gray-700 mb-2">แหล่งเงิน (Budget Sources)</h2>
               <div className="bg-white border rounded-xl overflow-hidden">
-                <div style={{ overflowX: "auto" }} data-scroll-container="">
+                <div ref={bsScrollRef} style={{ overflowX: "auto" }} data-scroll-container="" onScroll={onBsScroll}>
                   <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse" }}>
                     {makeTableHeader()}
                     <tbody>
