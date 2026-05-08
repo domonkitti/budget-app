@@ -5,6 +5,8 @@ export type SourceYearEntry = {
   budget: number
   target: number
   remain: number
+  cut_transfer: number
+  under_budget: number
 }
 
 export type SubJobYearEntry = {
@@ -15,6 +17,8 @@ export type SubJobYearEntry = {
   budget: number
   target: number
   remain: number
+  cut_transfer: number
+  under_budget: number
 }
 
 export type FlatProject = {

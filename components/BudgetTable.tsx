@@ -13,6 +13,8 @@ const GROUPS = [
   { key: "Budget", label: "งบเงินดำเนินการปี" },
   { key: "Target", label: "เป้าหมายการเบิกจ่ายปี" },
   { key: "Remain", label: "คงเหลือ" },
+  { key: "CutTransfer", label: "ตัดทิ้ง" },
+  { key: "UnderBudget", label: "ต่ำกว่างบ" },
 ] as const
 
 const HMWAT_ORDER = [
@@ -41,10 +43,14 @@ function fmt(n: number) {
 }
 
 function metricValue(
-  entry: Pick<SourceYearEntry, "budget" | "target" | "remain">,
+  entry: Pick<SourceYearEntry, "budget" | "target" | "remain" | "cut_transfer" | "under_budget">,
   group: Group,
 ): number {
-  return group === "Budget" ? entry.budget : group === "Target" ? entry.target : entry.remain
+  if (group === "Budget") return entry.budget
+  if (group === "Target") return entry.target
+  if (group === "Remain") return entry.remain
+  if (group === "CutTransfer") return entry.cut_transfer
+  return entry.under_budget
 }
 
 function getVal(
@@ -429,11 +435,25 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     Budget: true,
     Target: true,
     Remain: true,
+    CutTransfer: false,
+    UnderBudget: false,
   })
   const [fundVis, setFundVis] = useState<Record<FundColumnKey, boolean>>({
     committed: true,
     invest: true,
     total: true,
+  })
+  const theadRef = useRef<HTMLTableSectionElement>(null)
+  const [row2Top, setRow2Top] = useState(33)
+  const [row3Top, setRow3Top] = useState(66)
+
+  useEffect(() => {
+    const rows = theadRef.current?.rows
+    if (!rows || rows.length < 2) return
+    const h1 = rows[0].offsetHeight
+    const h2 = rows[1].offsetHeight
+    setRow2Top(h1)
+    setRow3Top(h1 + h2)
   })
 
   const allDisplayYears = useMemo(
@@ -594,9 +614,10 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           if (!last || last.group !== g) hmwatSegs.push({ group: g, rows: [row] })
           else last.rows.push(row)
         }
+        const multiGroup = hmwatSegs.length > 1
         for (const hs of hmwatSegs) {
           for (const row of hs.rows) items.push({ kind: "project", row })
-          items.push({ kind: "group-total", label: hs.group, projects: hs.rows })
+          if (multiGroup) items.push({ kind: "group-total", label: hs.group, projects: hs.rows })
         }
         items.push({ kind: "type-total", label: "รวมงานรายปี (Y)", projects: seg.rows, bg: "#DBEAFE", color: "#1E3A8A" })
       } else {
@@ -988,17 +1009,6 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           ))}
         </DropdownMenu>
 
-        <DropdownMenu label="Groups">
-          {GROUPS.map((group) => (
-            <DropdownItem
-              key={group.key}
-              checked={groupVis[group.key]}
-              onChange={(v) => setGroupVis((s) => ({ ...s, [group.key]: v }))}
-              label={group.key}
-            />
-          ))}
-        </DropdownMenu>
-
         <DropdownMenu label="Columns">
           {FUND_COLUMNS.map((col) => (
             <DropdownItem
@@ -1008,6 +1018,17 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               label={col.label}
             />
           ))}
+          {GROUPS.map((group) => (
+            <DropdownItem
+              key={group.key}
+              checked={groupVis[group.key]}
+              onChange={(v) => setGroupVis((s) => ({ ...s, [group.key]: v }))}
+              label={group.label}
+            />
+          ))}
+        </DropdownMenu>
+
+        <DropdownMenu label="Rows">
           <DropdownItem
             checked={showJobs}
             onChange={setShowJobs}
@@ -1032,7 +1053,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
             color: "#374151",
           }}
         >
-          <thead>
+          <thead ref={theadRef}>
             {/* Row 1 — group/year spans */}
             <tr>
               <th
@@ -1066,7 +1087,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 title={`Sort ข้อ ${itemSortIcon()}`}
                 style={{
                   ...thBase,
-                  top: 33,
+                  top: row2Top,
                   zIndex: 5,
                   width: 44,
                   left: 0,
@@ -1079,7 +1100,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <th
                 style={{
                   ...thBase,
-                  top: 33,
+                  top: row2Top,
                   zIndex: 5,
                   minWidth: 360,
                   maxWidth: 360,
@@ -1091,27 +1112,27 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 รายการ
               </th>
               {extraColumn && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 100, textAlign: "center" }}>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 100, textAlign: "center" }}>
                   {extraColumn.header}
                 </th>
               )}
               {infoVis.code && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 110 }}>Code</th>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 110 }}>Code</th>
               )}
               {infoVis.division && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Division</th>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Division</th>
               )}
               {infoVis.department && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Department</th>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Department</th>
               )}
               {infoVis.group && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 120 }}>Group</th>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Group</th>
               )}
               {infoVis.type && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, width: 44 }}>Type</th>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, width: 44 }}>Type</th>
               )}
               {infoVis.year && (
-                <th style={{ ...thBase, top: 33, zIndex: 4, minWidth: 112 }}>
+                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 112 }}>
                   <button
                     type="button"
                     style={{
@@ -1143,7 +1164,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         {visibleFunds.map((column) => (
                           <th
                             key={`${year}-${group.key}-${column.key}`}
-                            style={{ ...thBase, top: 33, zIndex: 4 }}
+                            style={{ ...thBase, top: row2Top, zIndex: 4 }}
                           >
                             <button
                               type="button"
@@ -1181,7 +1202,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <th
                 style={{
                   ...thBase,
-                  top: 66,
+                  top: row3Top,
                   zIndex: 5,
                   left: 0,
                   position: "sticky",
@@ -1191,7 +1212,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <th
                 style={{
                   ...thBase,
-                  top: 66,
+                  top: row3Top,
                   zIndex: 5,
                   left: 44,
                   position: "sticky",
@@ -1200,34 +1221,34 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               >
                 <PivotFilter allValues={allNames} selected={selNames} onChange={setSelNames} />
               </th>
-              {extraColumn && <th style={{ ...thBase, top: 66, zIndex: 4 }} />}
+              {extraColumn && <th style={{ ...thBase, top: row3Top, zIndex: 4 }} />}
               {infoVis.code && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allCodes} selected={selCodes} onChange={setSelCodes} />
                 </th>
               )}
               {infoVis.division && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allDivisions} selected={selDivisions} onChange={setSelDivisions} />
                 </th>
               )}
               {infoVis.department && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allDepartments} selected={selDepartments} onChange={setSelDepartments} />
                 </th>
               )}
               {infoVis.group && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allGroups} selected={selGroups} onChange={setSelGroups} />
                 </th>
               )}
               {infoVis.type && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allTypes} selected={selTypes} onChange={setSelTypes} />
                 </th>
               )}
               {infoVis.year && (
-                <th style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allStartYears} selected={selYears} onChange={setSelYears} />
                 </th>
               )}
@@ -1245,7 +1266,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                           return (
                             <th
                               key={`${year}-${group.key}-${column.key}-filter`}
-                              style={{ ...thBase, top: 66, zIndex: 4, padding: "4px" }}
+                              style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}
                             >
                               <div
                                 style={{
