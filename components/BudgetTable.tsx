@@ -127,7 +127,18 @@ function itemNoCompare(a: string | null, b: string | null) {
   if (!a && !b) return 0
   if (!a) return 1
   if (!b) return -1
-  return a.localeCompare(b, "th", { numeric: true, sensitivity: "base" })
+  const ap = a.split(".")
+  const bp = b.split(".")
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const as_ = ap[i] ?? ""
+    const bs_ = bp[i] ?? ""
+    const an = parseInt(as_, 10)
+    const bn = parseInt(bs_, 10)
+    if (!isNaN(an) && !isNaN(bn) && an !== bn) return an - bn
+    const sc = as_.localeCompare(bs_, "th")
+    if (sc !== 0) return sc
+  }
+  return 0
 }
 
 function workbookSafeName(value: string) {
@@ -407,10 +418,11 @@ type Props = {
   data: FlatProject[]
   years: number[]
   extraColumn?: { header: React.ReactNode; cell: (project: FlatProject) => React.ReactNode }
+  onFilteredDataChange?: (data: FlatProject[]) => void
 }
 export type BudgetTableHandle = { exportCurrentView: (label: string) => Promise<void> }
 
-const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ data, years, extraColumn }, ref) {
+const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ data, years, extraColumn, onFilteredDataChange }, ref) {
   const [selNames, setSelNames] = useState<Set<string>>(new Set())
   const [selCodes, setSelCodes] = useState<Set<string>>(new Set())
   const [selDivisions, setSelDivisions] = useState<Set<string>>(new Set())
@@ -446,14 +458,17 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const theadRef = useRef<HTMLTableSectionElement>(null)
   const [row2Top, setRow2Top] = useState(33)
   const [row3Top, setRow3Top] = useState(66)
+  const [row4Top, setRow4Top] = useState(99)
 
   useEffect(() => {
     const rows = theadRef.current?.rows
-    if (!rows || rows.length < 2) return
+    if (!rows || rows.length < 3) return
     const h1 = rows[0].offsetHeight
     const h2 = rows[1].offsetHeight
+    const h3 = rows[2].offsetHeight
     setRow2Top(h1)
     setRow3Top(h1 + h2)
+    setRow4Top(h1 + h2 + h3)
   })
 
   const allDisplayYears = useMemo(
@@ -485,8 +500,14 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     [data],
   )
 
-  const visibleGroups = GROUPS.filter((group) => groupVis[group.key])
-  const visibleFunds = FUND_COLUMNS.filter((column) => fundVis[column.key])
+  const visibleGroups = useMemo(
+    () => GROUPS.filter((group) => groupVis[group.key]),
+    [groupVis],
+  )
+  const visibleFunds = useMemo(
+    () => FUND_COLUMNS.filter((column) => fundVis[column.key]),
+    [fundVis],
+  )
   const leftColSpan =
     2 +
     Number(infoVis.code) +
@@ -589,6 +610,10 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       return sortState.dir === "asc" ? av - bv : bv - av
     })
   }, [filtered, fundVis, groupVis, sortState])
+
+  useEffect(() => {
+    onFilteredDataChange?.(sorted)
+  }, [onFilteredDataChange, sorted])
 
   type RenderedItem =
     | { kind: "project"; row: FlatProject }
@@ -881,6 +906,28 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     }
   }
 
+  function sourceHasData(breakdown: SourceYearEntry[], source: string): boolean {
+    if (!hasMoneyColumns) return true
+    return displayYears.some(year =>
+      visibleGroups.some(group =>
+        visibleFunds.some(col =>
+          getVal(breakdown, year, source, col.fundType, group.key) !== 0
+        )
+      )
+    )
+  }
+
+  function sourceTotalHasData(projects: FlatProject[], source: string): boolean {
+    if (!hasMoneyColumns) return true
+    return displayYears.some(year =>
+      visibleGroups.some(group =>
+        visibleFunds.some(col =>
+          sumProjectsBySource(projects, year, source, col.fundType, group.key) !== 0
+        )
+      )
+    )
+  }
+
   function renderTotalBlock(
     key: string,
     label: string,
@@ -928,7 +975,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
             </Fragment>
           ))}
         </tr>
-        {showSources && sources.map((source) => (
+        {showSources && sources.filter(source => sourceTotalHasData(projects, source)).map((source) => (
           <tr key={`${key}-src-${source}`} style={{ background: bg }}>
             <td style={{ ...infoCell(0), width: 44, background: bg }} />
             <td style={{ ...infoCell(44), paddingLeft: 24, background: bg, color, fontStyle: "italic", fontWeight: 400, maxWidth: 360, whiteSpace: "normal", wordBreak: "break-word" }}>
@@ -1054,14 +1101,29 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           }}
         >
           <thead ref={theadRef}>
-            {/* Row 1 — group/year spans */}
+            {/* Row 1 — year spans (Info rowSpan=2) */}
             <tr>
               <th
                 colSpan={leftColSpan}
+                rowSpan={2}
                 style={{ ...thBase, top: 0, zIndex: 5, minWidth: 440, left: 0 }}
               >
                 Info
               </th>
+              {hasMoneyColumns &&
+                displayYears.map((year) => (
+                  <th
+                    key={year}
+                    colSpan={visibleGroups.length * visibleFunds.length}
+                    style={{ ...thBase, top: 0, zIndex: 4 }}
+                  >
+                    {year}
+                  </th>
+                ))}
+            </tr>
+
+            {/* Row 2 — group spans */}
+            <tr>
               {hasMoneyColumns &&
                 displayYears.map((year) => (
                   <Fragment key={year}>
@@ -1069,25 +1131,23 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                       <th
                         key={`${year}-${group.key}`}
                         colSpan={visibleFunds.length}
-                        style={{ ...thBase, top: 0, zIndex: 4 }}
+                        style={{ ...thBase, top: row2Top, zIndex: 4 }}
                       >
-                        {group.key === "Remain"
-                          ? group.label
-                          : `${group.label} ${year}`}
+                        {group.label}
                       </th>
                     ))}
                   </Fragment>
                 ))}
             </tr>
 
-            {/* Row 2 — column headers */}
+            {/* Row 3 — column headers */}
             <tr>
               <th
                 onClick={cycleItemSort}
                 title={`Sort ข้อ ${itemSortIcon()}`}
                 style={{
                   ...thBase,
-                  top: row2Top,
+                  top: row3Top,
                   zIndex: 5,
                   width: 44,
                   left: 0,
@@ -1100,7 +1160,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <th
                 style={{
                   ...thBase,
-                  top: row2Top,
+                  top: row3Top,
                   zIndex: 5,
                   minWidth: 360,
                   maxWidth: 360,
@@ -1112,47 +1172,34 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 รายการ
               </th>
               {extraColumn && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 100, textAlign: "center" }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 100, textAlign: "center" }}>
                   {extraColumn.header}
                 </th>
               )}
               {infoVis.code && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 110 }}>Code</th>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 110 }}>Code</th>
               )}
               {infoVis.division && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Division</th>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 120 }}>Division</th>
               )}
               {infoVis.department && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Department</th>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 120 }}>Department</th>
               )}
               {infoVis.group && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 120 }}>Group</th>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 120 }}>Group</th>
               )}
               {infoVis.type && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, width: 44 }}>Type</th>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, width: 44 }}>Type</th>
               )}
               {infoVis.year && (
-                <th style={{ ...thBase, top: row2Top, zIndex: 4, minWidth: 112 }}>
+                <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 112 }}>
                   <button
                     type="button"
-                    style={{
-                      display: "inline-flex",
-                      width: "100%",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 4,
-                      background: "none",
-                      border: "none",
-                      color: "#6B7280",
-                      cursor: "pointer",
-                      fontSize: 11,
-                    }}
+                    style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: 11 }}
                     onClick={cycleYearSort}
                   >
                     Start year{" "}
-                    <span style={{ fontSize: 9, color: "#6B7280" }}>
-                      {yearSortIcon()}
-                    </span>
+                    <span style={{ fontSize: 9, color: "#6B7280" }}>{yearSortIcon()}</span>
                   </button>
                 </th>
               )}
@@ -1164,30 +1211,15 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         {visibleFunds.map((column) => (
                           <th
                             key={`${year}-${group.key}-${column.key}`}
-                            style={{ ...thBase, top: row2Top, zIndex: 4 }}
+                            style={{ ...thBase, top: row3Top, zIndex: 4 }}
                           >
                             <button
                               type="button"
-                              style={{
-                                display: "inline-flex",
-                                width: "100%",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: 4,
-                                background: "none",
-                                border: "none",
-                                color: "#6B7280",
-                                cursor: "pointer",
-                                fontSize: 11,
-                              }}
-                              onClick={() =>
-                                cycleMoneySort(year, group.key, column.key)
-                              }
+                              style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: 11 }}
+                              onClick={() => cycleMoneySort(year, group.key, column.key)}
                             >
                               {column.label}{" "}
-                              <span style={{ fontSize: 9 }}>
-                                {moneySortIcon(year, group.key, column.key)}
-                              </span>
+                              <span style={{ fontSize: 9 }}>{moneySortIcon(year, group.key, column.key)}</span>
                             </button>
                           </th>
                         ))}
@@ -1197,12 +1229,12 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 ))}
             </tr>
 
-            {/* Row 3 — filter inputs */}
+            {/* Row 4 — filter inputs */}
             <tr>
               <th
                 style={{
                   ...thBase,
-                  top: row3Top,
+                  top: row4Top,
                   zIndex: 5,
                   left: 0,
                   position: "sticky",
@@ -1212,7 +1244,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <th
                 style={{
                   ...thBase,
-                  top: row3Top,
+                  top: row4Top,
                   zIndex: 5,
                   left: 44,
                   position: "sticky",
@@ -1221,34 +1253,34 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               >
                 <PivotFilter allValues={allNames} selected={selNames} onChange={setSelNames} />
               </th>
-              {extraColumn && <th style={{ ...thBase, top: row3Top, zIndex: 4 }} />}
+              {extraColumn && <th style={{ ...thBase, top: row4Top, zIndex: 4 }} />}
               {infoVis.code && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allCodes} selected={selCodes} onChange={setSelCodes} />
                 </th>
               )}
               {infoVis.division && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allDivisions} selected={selDivisions} onChange={setSelDivisions} />
                 </th>
               )}
               {infoVis.department && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allDepartments} selected={selDepartments} onChange={setSelDepartments} />
                 </th>
               )}
               {infoVis.group && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allGroups} selected={selGroups} onChange={setSelGroups} />
                 </th>
               )}
               {infoVis.type && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allTypes} selected={selTypes} onChange={setSelTypes} />
                 </th>
               )}
               {infoVis.year && (
-                <th style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
                   <PivotFilter allValues={allStartYears} selected={selYears} onChange={setSelYears} />
                 </th>
               )}
@@ -1266,7 +1298,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                           return (
                             <th
                               key={`${year}-${group.key}-${column.key}-filter`}
-                              style={{ ...thBase, top: row3Top, zIndex: 4, padding: "4px" }}
+                              style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}
                             >
                               <div
                                 style={{
@@ -1513,7 +1545,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                     ))}
 
                   {showSources &&
-                    sources.map((source) => (
+                    sources.filter(source => sourceHasData(row.source_breakdown, source)).map((source) => (
                       <tr
                         key={`${row.project_code}-${source}`}
                         style={{ background: "#FAFAFA" }}

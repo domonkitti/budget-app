@@ -143,6 +143,7 @@ export type BatchSaveRequest = {
   budget_source_updates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
   new_sub_jobs: Array<{ project_id: number; name: string; sort_order: number | null; fund_type: string; data_year: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
   new_budget_sources: Array<{ project_id: number; source: string; fund_type: string; data_year: number; budget: number; target: number; cut_transfer: number; under_budget: number }>
+  deleted_sub_job_names?: Array<{ project_id: number; name: string }>
 }
 
 export type FilterOptions = {

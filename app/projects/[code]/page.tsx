@@ -24,11 +24,11 @@ type RecalcSource = PendingRow & { prefix: "sj" | "bs"; groupName: string; sort_
 
 type SubJobGroup = {
   name: string; sort_order: number | null
-  years: { year: number; committed: SubJob | null; invest: SubJob | null }[]
+  years: { year: number; committed: SubJob | null; invest: SubJob | null; summary: SubJob | null }[]
 }
 type SourceGroup = {
   source: string
-  years: { year: number; committed: BudgetSource | null; invest: BudgetSource | null }[]
+  years: { year: number; committed: BudgetSource | null; invest: BudgetSource | null; summary: BudgetSource | null }[]
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -39,8 +39,10 @@ function groupSubJobs(jobs: SubJob[]): SubJobGroup[] {
     if (!map.has(sj.name)) map.set(sj.name, { name: sj.name, sort_order: sj.sort_order, years: [] })
     const g = map.get(sj.name)!
     let yr = g.years.find((y) => y.year === sj.data_year)
-    if (!yr) { yr = { year: sj.data_year, committed: null, invest: null }; g.years.push(yr) }
-    if (sj.fund_type === "ผูกพัน") yr.committed = sj; else yr.invest = sj
+    if (!yr) { yr = { year: sj.data_year, committed: null, invest: null, summary: null }; g.years.push(yr) }
+    if (sj.fund_type === "ผูกพัน") yr.committed = sj
+    else if (sj.fund_type === "ลงทุน") yr.invest = sj
+    else yr.summary = sj
   }
   return [...map.values()]
     .sort((a, b) => (a.sort_order ?? 999999) - (b.sort_order ?? 999999) || a.name.localeCompare(b.name, "th"))
@@ -53,8 +55,10 @@ function groupSources(sources: BudgetSource[]): SourceGroup[] {
     if (!map.has(bs.source)) map.set(bs.source, { source: bs.source, years: [] })
     const g = map.get(bs.source)!
     let yr = g.years.find((y) => y.year === bs.data_year)
-    if (!yr) { yr = { year: bs.data_year, committed: null, invest: null }; g.years.push(yr) }
-    if (bs.fund_type === "ผูกพัน") yr.committed = bs; else yr.invest = bs
+    if (!yr) { yr = { year: bs.data_year, committed: null, invest: null, summary: null }; g.years.push(yr) }
+    if (bs.fund_type === "ผูกพัน") yr.committed = bs
+    else if (bs.fund_type === "ลงทุน") yr.invest = bs
+    else yr.summary = bs
   }
   return [...map.values()].map((g) => ({ ...g, years: g.years.sort((a, b) => a.year - b.year) }))
 }
@@ -140,6 +144,12 @@ export default function ProjectPage() {
   // Save bar
   const [saveComment, setSaveComment] = useState("")
 
+  // Sub-job management
+  const [newSjNames, setNewSjNames] = useState<string[]>([])
+  const [deletedSjNames, setDeletedSjNames] = useState<Set<string>>(new Set())
+  const [sjMgmtOpen, setSjMgmtOpen] = useState(false)
+  const [sjNameInput, setSjNameInput] = useState("")
+
   // Info editing
   const [editingInfo, setEditingInfo] = useState(false)
   const [infoForm, setInfoForm] = useState({ name: "", item_no: "", year: "", project_type: "", division: "", department: "", group_name: "" })
@@ -211,7 +221,7 @@ export default function ProjectPage() {
     try { setHistory(await api.projectHistory(code)) } catch {}
   }, [code, isScenario])
 
-  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); load() }, [load])
+  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
 
 
@@ -264,9 +274,8 @@ export default function ProjectPage() {
     const extraDeletes: string[] = []
     const extraPendingNew = new Map<string, NewPendingRow>()
     const { prefix, groupName } = source
-    const { data_year } = source
     const sortOrder = source.sort_order ?? null
-    const siblingFund = source.fund_type === "ผูกพัน" ? "ลงทุน" : "ผูกพัน"
+
     const rows = prefix === "sj" ? project.sub_jobs : project.budget_sources
     const sameGroup = (row: SubJob | BudgetSource) =>
       prefix === "sj" ? (row as SubJob).name === groupName : (row as BudgetSource).source === groupName
@@ -277,53 +286,119 @@ export default function ProjectPage() {
       }
       return null
     }
-    const siblingRow = findGroupedRow(siblingFund, data_year)
-    const siblingPendingNew = pendingNew.get(`${prefix}-new|${groupName}|${data_year}|${siblingFund}`)
-    const siblingKey = siblingRow ? `${prefix}-${siblingRow.id}` : ""
-    const siblingBudget = siblingRow ? (pending.get(siblingKey)?.budget ?? siblingRow.budget) : (siblingPendingNew?.budget ?? 0)
-    const siblingTarget = siblingRow ? (pending.get(siblingKey)?.target ?? siblingRow.target) : (siblingPendingNew?.target ?? 0)
-    const totalRemain = (source.budget - source.target) + (siblingBudget - siblingTarget)
-    const carryForward = totalRemain + source.cut_transfer + source.under_budget
 
-    const yearIdx = allYears.indexOf(data_year)
-    if (yearIdx < 0 || yearIdx >= allYears.length - 1) return { extraPending, extraDeletes, extraPendingNew }
-
-    const nextYear = allYears[yearIdx + 1]
-    const nextComm = findGroupedRow("ผูกพัน", nextYear)
-    if (nextComm) {
-      const nextKey = `${prefix}-${nextComm.id}`
-      const nextBase = pending.get(nextKey) ?? {
-        budget: nextComm.budget,
-        target: nextComm.target,
-        cut_transfer: nextComm.cut_transfer,
-        under_budget: nextComm.under_budget,
+    // Find the รวม (summary) row for a given year — holds combined ct/ub
+    const findSummaryRow = (year: number) => {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i]
+        if (sameGroup(row) && row.fund_type !== "ผูกพัน" && row.fund_type !== "ลงทุน" && row.data_year === year) return row
       }
-      const nextUpdated = { ...nextBase, budget: carryForward }
-      const isOriginal =
-        nextUpdated.budget === nextComm.budget &&
-        nextUpdated.target === nextComm.target &&
-        nextUpdated.cut_transfer === nextComm.cut_transfer &&
-        nextUpdated.under_budget === nextComm.under_budget
-      if (isOriginal) extraDeletes.push(nextKey)
-      else extraPending.set(nextKey, nextUpdated)
-    } else {
-      const nextKey = `${prefix}-new|${groupName}|${nextYear}|ผูกพัน`
-      const existing = pendingNew.get(nextKey)
-      extraPendingNew.set(nextKey, existing
-        ? { ...existing, budget: carryForward }
-        : {
-          budget: carryForward,
-          target: 0,
-          cut_transfer: 0,
-          under_budget: 0,
-          project_id: project.id,
-          name_or_source: groupName,
-          sort_order: prefix === "sj" ? sortOrder : null,
-          fund_type: "ผูกพัน",
-          data_year: nextYear,
-          prefix,
+      return null
+    }
+
+    // Get effective budget/target for a specific fund_type at a given year.
+    // editedFundType/editedBudget/editedTarget override the row being edited (step 0).
+    // For cascade steps they represent the new ผูกพัน value we just computed.
+    const getFundValues = (fundType: string, year: number, editedFundType: string, editedBudget: number, editedTarget: number) => {
+      if (editedFundType === fundType) return { budget: editedBudget, target: editedTarget }
+      const row = findGroupedRow(fundType, year)
+      if (row) {
+        const key = `${prefix}-${row.id}`
+        const p = extraPending.get(key) ?? pending.get(key)
+        return { budget: p?.budget ?? row.budget, target: p?.target ?? row.target }
+      }
+      const pn = pendingNew.get(`${prefix}-new|${groupName}|${year}|${fundType}`) ?? extraPendingNew.get(`${prefix}-new|${groupName}|${year}|${fundType}`)
+      return { budget: pn?.budget ?? 0, target: pn?.target ?? 0 }
+    }
+
+    // Sum ct/ub from all row types (committed + invest + summary) for a given year.
+    // When source.id matches the edited row, use source's fresh values instead of DB/pending.
+    const getCtUb = (year: number) => {
+      let ct = 0, ub = 0
+      const candidates = [
+        findGroupedRow("ผูกพัน", year),
+        findGroupedRow("ลงทุน", year),
+        findSummaryRow(year),
+      ]
+      for (const row of candidates) {
+        if (!row) continue
+        if (row.fund_type === source.fund_type && row.data_year === source.data_year) {
+          ct += source.cut_transfer ?? 0
+          ub += source.under_budget ?? 0
+        } else {
+          const key = `${prefix}-${row.id}`
+          const p = extraPending.get(key) ?? pending.get(key)
+          ct += p?.cut_transfer ?? row.cut_transfer ?? 0
+          ub += p?.under_budget ?? row.under_budget ?? 0
         }
-      )
+      }
+      return { ct, ub }
+    }
+
+    // Compute carry-forward: always sum ผูกพัน remain + ลงทุน remain + ct + ub.
+    const computeCarry = (year: number, editedFundType: string, editedBudget: number, editedTarget: number, ct: number, ub: number): number => {
+      const comm = getFundValues("ผูกพัน", year, editedFundType, editedBudget, editedTarget)
+      const inv = getFundValues("ลงทุน", year, editedFundType, editedBudget, editedTarget)
+      return (comm.budget - comm.target) + (inv.budget - inv.target) + ct + ub
+    }
+
+    // Cascade: start from source year, propagate carry-forward through committed rows
+    let curYear = source.data_year
+    let curFundType = source.fund_type
+    let curBudget = source.budget
+    let curTarget = source.target
+
+    for (let step = 0; step < 30; step++) {
+      const { ct: effectiveCt, ub: effectiveUb } = getCtUb(curYear)
+      const carryForward = computeCarry(curYear, curFundType, curBudget, curTarget, effectiveCt, effectiveUb)
+      const nextYear = curYear + 1
+      const nextComm = findGroupedRow("ผูกพัน", nextYear)
+
+      if (nextComm) {
+        const nextKey = `${prefix}-${nextComm.id}`
+        const nextBase = extraPending.get(nextKey) ?? pending.get(nextKey) ?? {
+          budget: nextComm.budget,
+          target: nextComm.target,
+          cut_transfer: nextComm.cut_transfer,
+          under_budget: nextComm.under_budget,
+        }
+        const nextUpdated = { ...nextBase, budget: carryForward }
+        const isOriginal =
+          nextUpdated.budget === nextComm.budget &&
+          nextUpdated.target === nextComm.target &&
+          nextUpdated.cut_transfer === nextComm.cut_transfer &&
+          nextUpdated.under_budget === nextComm.under_budget
+        if (isOriginal) {
+          extraDeletes.push(nextKey)
+          break
+        }
+        extraPending.set(nextKey, nextUpdated)
+        // Continue cascade: next year's ผูกพัน budget is carryForward
+        curYear = nextYear
+        curFundType = "ผูกพัน"
+        curBudget = carryForward
+        curTarget = nextBase.target
+      } else {
+        // No committed row for nextYear — create one pendingNew and stop
+        const nextKey = `${prefix}-new|${groupName}|${nextYear}|ผูกพัน`
+        const existing = pendingNew.get(nextKey) ?? extraPendingNew.get(nextKey)
+        extraPendingNew.set(nextKey, existing
+          ? { ...existing, budget: carryForward }
+          : {
+            budget: carryForward,
+            target: 0,
+            cut_transfer: 0,
+            under_budget: 0,
+            project_id: project.id,
+            name_or_source: groupName,
+            sort_order: prefix === "sj" ? sortOrder : null,
+            fund_type: "ผูกพัน",
+            data_year: nextYear,
+            prefix,
+          }
+        )
+        break
+      }
     }
 
     return { extraPending, extraDeletes, extraPendingNew }
@@ -445,19 +520,29 @@ export default function ProjectPage() {
         for (const [key, p] of pending) {
           const [prefix, idStr] = key.split("-")
           const id = parseInt(idStr)
-          if (prefix === "sj") sjUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
-          else bsUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
+          if (prefix === "sj") {
+            const row = project!.sub_jobs.find(r => r.id === id)
+            if (row && deletedSjNames.has(row.name)) continue
+            sjUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
+          } else {
+            bsUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
+          }
         }
-        const newSjs = [...pendingNew.values()].filter(nr => nr.prefix === "sj").map(nr => ({
-          project_id: nr.project_id, name: nr.name_or_source, sort_order: nr.sort_order,
-          fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
-          cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
-        }))
+        const newSjs = [...pendingNew.values()]
+          .filter(nr => nr.prefix === "sj"
+            && nr.name_or_source !== DEFAULT_VIRTUAL_SJ_NAME
+            && !deletedSjNames.has(nr.name_or_source))
+          .map(nr => ({
+            project_id: nr.project_id, name: nr.name_or_source, sort_order: nr.sort_order,
+            fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
+            cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
+          }))
         const newBss = [...pendingNew.values()].filter(nr => nr.prefix === "bs").map(nr => ({
           project_id: nr.project_id, source: nr.name_or_source,
           fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
           cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
         }))
+        const deletedNames = [...deletedSjNames].map(name => ({ project_id: project!.id, name }))
         await api.batchSave({
           batch_id: batchId,
           batch_comment: saveComment.trim(),
@@ -465,12 +550,15 @@ export default function ProjectPage() {
           budget_source_updates: bsUpdates,
           new_sub_jobs: newSjs,
           new_budget_sources: newBss,
+          deleted_sub_job_names: deletedNames.length > 0 ? deletedNames : undefined,
         })
       }
       setPending(new Map())
       setPendingNew(new Map())
       setUndoKeys(new Set())
       setSaveComment("")
+      setNewSjNames([])
+      setDeletedSjNames(new Set())
       setLoading(true)
       await load()
       await loadHistory()
@@ -548,12 +636,23 @@ export default function ProjectPage() {
     })
   }
 
-  const pendingCount = pending.size + pendingNew.size
+  const pendingCount = pending.size + pendingNew.size + newSjNames.length + deletedSjNames.size
 
   // ── Table helpers — computed first so validation + totals use the same rows ─
 
   const subJobGroups = project ? groupSubJobs(project.sub_jobs ?? []) : []
   const sourceGroups = project ? groupSources(project.budget_sources ?? []) : []
+
+  // All years across both tables + any carry-forward years in pendingNew, sorted
+  const allYears = project ? [...new Set([
+    ...project.sub_jobs.map(sj => sj.data_year),
+    ...project.budget_sources.map(bs => bs.data_year),
+    ...[...pendingNew.keys()].map(k => parseInt(k.split("|")[2])).filter(y => !isNaN(y)),
+  ])].sort() : []
+
+  const DEFAULT_VIRTUAL_SJ_NAME = "งานรวม"
+  const activeSjGroups = subJobGroups.filter(g => !deletedSjNames.has(g.name))
+  const hasVirtualSjRow = activeSjGroups.length === 0 && newSjNames.length === 0 && allYears.length > 0
 
   // ── Sum validation — per (year × fund_type × field), grouped rows only ─────
 
@@ -564,7 +663,7 @@ export default function ProjectPage() {
     const bs = new Map<string, number>()
     const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v)
 
-    for (const g of subJobGroups) {
+    for (const g of activeSjGroups) {
       for (const y of g.years) {
         if (y.committed) {
           add(sj, `ผูกพัน|${y.year}|budget`, effectiveValue(y.committed, "sj", "budget"))
@@ -580,6 +679,23 @@ export default function ProjectPage() {
           const np = pendingNew.get(`sj-new|${g.name}|${y.year}|ลงทุน`)
           if (np) { add(sj, `ลงทุน|${y.year}|budget`, np.budget); add(sj, `ลงทุน|${y.year}|target`, np.target) }
         }
+      }
+    }
+    for (const name of newSjNames) {
+      for (const year of allYears) {
+        const pnc = pendingNew.get(`sj-new|${name}|${year}|ผูกพัน`)
+        const pni = pendingNew.get(`sj-new|${name}|${year}|ลงทุน`)
+        if (pnc) { add(sj, `ผูกพัน|${year}|budget`, pnc.budget); add(sj, `ผูกพัน|${year}|target`, pnc.target) }
+        if (pni) { add(sj, `ลงทุน|${year}|budget`, pni.budget); add(sj, `ลงทุน|${year}|target`, pni.target) }
+      }
+    }
+    // Virtual row: include only explicitly-edited cells in sj map
+    if (hasVirtualSjRow) {
+      for (const [key, np] of pendingNew) {
+        if (!key.startsWith("sj-new|")) continue
+        const [, , yrStr, fundType] = key.split("|")
+        add(sj, `${fundType}|${parseInt(yrStr)}|budget`, np.budget)
+        add(sj, `${fundType}|${parseInt(yrStr)}|target`, np.target)
       }
     }
     for (const g of sourceGroups) {
@@ -604,6 +720,8 @@ export default function ProjectPage() {
     const all = new Set([...sj.keys(), ...bs.keys()])
     const out: SumMismatch[] = []
     for (const key of [...all].sort()) {
+      // Virtual row: unedited cells are treated as matching, so skip bs-only keys
+      if (hasVirtualSjRow && !sj.has(key)) continue
       const sv = sj.get(key) ?? 0
       const bv = bs.get(key) ?? 0
       if (Math.abs(sv - bv) > 0.001) {
@@ -617,34 +735,51 @@ export default function ProjectPage() {
   const hasMismatch = sumMismatches.length > 0
   const visibleHistory = history.filter(isHistoryVisible).slice(0, 20)
 
-  // All years across both tables, sorted
-  const allYears = project ? [...new Set([
-    ...project.sub_jobs.map(sj => sj.data_year),
-    ...project.budget_sources.map(bs => bs.data_year),
-  ])].sort() : []
-
   // Per-year total helpers
   type YearTotal = { sc_b: number; si_b: number; sc_t: number; si_t: number; total_ct: number; total_ub: number }
 
   function sjYearTotal(year: number): YearTotal {
     let sc_b = 0, sc_t = 0, si_b = 0, si_t = 0, total_ct = 0, total_ub = 0
-    for (const g of subJobGroups) {
+    for (const g of activeSjGroups) {
       const yd = g.years.find(y => y.year === year)
-      const comm = yd?.committed ?? null; const inv = yd?.invest ?? null
+      const comm = yd?.committed ?? null; const inv = yd?.invest ?? null; const summ = yd?.summary ?? null
       if (comm) { sc_b += effectiveValue(comm, "sj", "budget"); sc_t += effectiveValue(comm, "sj", "target") }
       else { const np = pendingNew.get(`sj-new|${g.name}|${year}|ผูกพัน`); if (np) { sc_b += np.budget; sc_t += np.target } }
       if (inv) { si_b += effectiveValue(inv, "sj", "budget"); si_t += effectiveValue(inv, "sj", "target") }
       else { const np = pendingNew.get(`sj-new|${g.name}|${year}|ลงทุน`); if (np) { si_b += np.budget; si_t += np.target } }
-      // cut_transfer/under_budget: use committed row if exists, else invest
-      const adjRow = comm ?? inv
-      const adjPendingNew = pendingNew.get(`sj-new|${g.name}|${year}|ผูกพัน`) ?? pendingNew.get(`sj-new|${g.name}|${year}|ลงทุน`)
-      if (adjRow) {
-        total_ct += effectiveValue(adjRow, "sj", "cut_transfer")
-        total_ub += effectiveValue(adjRow, "sj", "under_budget")
-      } else if (adjPendingNew) {
-        total_ct += adjPendingNew.cut_transfer
-        total_ub += adjPendingNew.under_budget
+      // Sum ct/ub from all row types
+      if (comm || inv || summ) {
+        for (const r of [comm, inv, summ]) {
+          if (!r) continue
+          total_ct += effectiveValue(r, "sj", "cut_transfer")
+          total_ub += effectiveValue(r, "sj", "under_budget")
+        }
+      } else {
+        const pnc = pendingNew.get(`sj-new|${g.name}|${year}|ผูกพัน`)
+        const pni = pendingNew.get(`sj-new|${g.name}|${year}|ลงทุน`)
+        if (pnc) { total_ct += pnc.cut_transfer; total_ub += pnc.under_budget }
+        if (pni) { total_ct += pni.cut_transfer; total_ub += pni.under_budget }
       }
+    }
+    for (const name of newSjNames) {
+      const pnc = pendingNew.get(`sj-new|${name}|${year}|ผูกพัน`)
+      const pni = pendingNew.get(`sj-new|${name}|${year}|ลงทุน`)
+      sc_b += pnc?.budget ?? 0; sc_t += pnc?.target ?? 0
+      si_b += pni?.budget ?? 0; si_t += pni?.target ?? 0
+      const adjPn = pnc ?? pni
+      if (adjPn) { total_ct += adjPn.cut_transfer; total_ub += adjPn.under_budget }
+    }
+    if (hasVirtualSjRow) {
+      const pnc = pendingNew.get(`sj-new|${DEFAULT_VIRTUAL_SJ_NAME}|${year}|ผูกพัน`)
+      const pni = pendingNew.get(`sj-new|${DEFAULT_VIRTUAL_SJ_NAME}|${year}|ลงทุน`)
+      const bst = bsYearTotal(year)
+      sc_b += pnc?.budget ?? bst.sc_b
+      sc_t += pnc?.target ?? bst.sc_t
+      si_b += pni?.budget ?? bst.si_b
+      si_t += pni?.target ?? bst.si_t
+      const adjPn = pnc ?? pni
+      total_ct += adjPn ? adjPn.cut_transfer : bst.total_ct
+      total_ub += adjPn ? adjPn.under_budget : bst.total_ub
     }
     return { sc_b, si_b, sc_t, si_t, total_ct, total_ub }
   }
@@ -653,19 +788,23 @@ export default function ProjectPage() {
     let sc_b = 0, sc_t = 0, si_b = 0, si_t = 0, total_ct = 0, total_ub = 0
     for (const g of sourceGroups) {
       const yd = g.years.find(y => y.year === year)
-      const comm = yd?.committed ?? null; const inv = yd?.invest ?? null
+      const comm = yd?.committed ?? null; const inv = yd?.invest ?? null; const summ = yd?.summary ?? null
       if (comm) { sc_b += effectiveValue(comm, "bs", "budget"); sc_t += effectiveValue(comm, "bs", "target") }
       else { const np = pendingNew.get(`bs-new|${g.source}|${year}|ผูกพัน`); if (np) { sc_b += np.budget; sc_t += np.target } }
       if (inv) { si_b += effectiveValue(inv, "bs", "budget"); si_t += effectiveValue(inv, "bs", "target") }
       else { const np = pendingNew.get(`bs-new|${g.source}|${year}|ลงทุน`); if (np) { si_b += np.budget; si_t += np.target } }
-      const adjRow = comm ?? inv
-      const adjPendingNew = pendingNew.get(`bs-new|${g.source}|${year}|ผูกพัน`) ?? pendingNew.get(`bs-new|${g.source}|${year}|ลงทุน`)
-      if (adjRow) {
-        total_ct += effectiveValue(adjRow, "bs", "cut_transfer")
-        total_ub += effectiveValue(adjRow, "bs", "under_budget")
-      } else if (adjPendingNew) {
-        total_ct += adjPendingNew.cut_transfer
-        total_ub += adjPendingNew.under_budget
+      // Sum ct/ub from all row types
+      if (comm || inv || summ) {
+        for (const r of [comm, inv, summ]) {
+          if (!r) continue
+          total_ct += effectiveValue(r, "bs", "cut_transfer")
+          total_ub += effectiveValue(r, "bs", "under_budget")
+        }
+      } else {
+        const pnc = pendingNew.get(`bs-new|${g.source}|${year}|ผูกพัน`)
+        const pni = pendingNew.get(`bs-new|${g.source}|${year}|ลงทุน`)
+        if (pnc) { total_ct += pnc.cut_transfer; total_ub += pnc.under_budget }
+        if (pni) { total_ct += pni.cut_transfer; total_ub += pni.under_budget }
       }
     }
     return { sc_b, si_b, sc_t, si_t, total_ct, total_ub }
@@ -802,6 +941,7 @@ export default function ProjectPage() {
           const yd = years.find(y => y.year === year)
           const committed = yd?.committed ?? null
           const invest = yd?.invest ?? null
+          const summary = yd?.summary ?? null
           const pnc = pendingNew.get(`${prefix}-new|${groupName}|${year}|ผูกพัน`)
           const pni = pendingNew.get(`${prefix}-new|${groupName}|${year}|ลงทุน`)
           const cb = committed ? effectiveValue(committed, prefix, "budget") : (pnc?.budget ?? 0)
@@ -809,8 +949,10 @@ export default function ProjectPage() {
           const ib = invest ? effectiveValue(invest, prefix, "budget") : (pni?.budget ?? 0)
           const it_ = invest ? effectiveValue(invest, prefix, "target") : (pni?.target ?? 0)
           const tb = cb + ib; const tt = ct + it_
-          // cut_transfer/under_budget stored on committed row; fall back to invest if no committed row, then pendingNew
-          const adjRow = committed ?? invest
+          // cut_transfer/under_budget: pick the row that actually has non-zero ct/ub data
+          const hasRawCtUb = (r: SubJob | BudgetSource | null) =>
+            !!r && (((r as BudgetSource).cut_transfer ?? 0) !== 0 || ((r as BudgetSource).under_budget ?? 0) !== 0)
+          const adjRow = [summary, committed, invest].find(hasRawCtUb) ?? committed ?? invest ?? summary
           const adjPn = pnc ?? pni
           const adjFundType = adjRow?.fund_type ?? (pnc ? "ผูกพัน" : "ลงทุน")
           const hasAdj = adjRow != null || adjPn != null
@@ -854,6 +996,80 @@ export default function ProjectPage() {
               {T(sc_b - sc_t, `${year}-cr`)}{T(si_b - si_t, `${year}-ir`)}{T(tb - tt, `${year}-tr`)}
               {isSj || total_ct !== 0 ? T(total_ct, `${year}-tct`) : na(`${year}-tct`)}
               {isSj || total_ub !== 0 ? T(total_ub, `${year}-tub`) : na(`${year}-tub`)}
+            </Fragment>
+          )
+        })}
+      </tr>
+    )
+  }
+
+  // Virtual sub-job row — shown when project has no sub-jobs; initialized from bs totals
+  function renderVirtualSubJobRow() {
+    const groupName = DEFAULT_VIRTUAL_SJ_NAME
+    const prefix = "sj" as const
+    const neg = (v: number): React.CSSProperties => v < 0 ? { color: "#DC2626" } : {}
+    const comp = (v: number, key: string) => (
+      <td key={key} style={{ ...td(), textAlign: "right", fontFamily: "monospace", background: "#F9FAFB", ...neg(v) }}>{fmt3(v)}</td>
+    )
+
+    function makeVirtualCell(field: EditField, fundType: string, year: number, initValues: PendingRow) {
+      const vKey = `${prefix}-new|${groupName}|${year}|${fundType}`
+      const np = pendingNew.get(vKey)
+      const effVal = np?.[field] ?? initValues[field]
+      const isEd = editState?.key === vKey && editState?.field === field
+      const isPend = !!np
+      return (
+        <td key={`${vKey}-${field}`} style={{ ...td(), padding: 0, background: !np ? "#F0F9FF" : "transparent" }}>
+          <EditableCell
+            value={effVal} isPending={isPend} isEditing={isEd}
+            isUndo={undoKeys.has(`${vKey}|${field}`)}
+            editValue={isEd ? editState!.value : ""}
+            onStartEdit={() => {
+              setPendingNew((prev) => {
+                if (prev.has(vKey)) return prev
+                const n = new Map(prev)
+                n.set(vKey, { ...initValues, project_id: project!.id, name_or_source: groupName, sort_order: null, fund_type: fundType, data_year: year, prefix })
+                return n
+              })
+              setEditState({ key: vKey, field, value: String(np?.[field] ?? initValues[field]) })
+            }}
+            onChange={(v) => setEditState((s) => s ? { ...s, value: v } : s)}
+            onCommit={commitEdit} onCancel={() => setEditState(null)}
+          />
+        </td>
+      )
+    }
+
+    return (
+      <tr key={groupName} style={{ background: "#fff" }}>
+        <td style={{ ...td(), fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1, width: 200, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>
+          {groupName}
+          <span style={{ marginLeft: 6, fontSize: 10, color: "#3B82F6", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 3, padding: "1px 5px" }}>auto</span>
+        </td>
+        {allYears.map(year => {
+          const { sc_b, si_b, sc_t, si_t, total_ct, total_ub } = bsYearTotal(year)
+          const pnc = pendingNew.get(`${prefix}-new|${groupName}|${year}|ผูกพัน`)
+          const pni = pendingNew.get(`${prefix}-new|${groupName}|${year}|ลงทุน`)
+          const cb = pnc?.budget ?? sc_b
+          const ct = pnc?.target ?? sc_t
+          const ib = pni?.budget ?? si_b
+          const it_ = pni?.target ?? si_t
+          const tb = cb + ib; const tt = ct + it_
+          const commInit: PendingRow = { budget: sc_b, target: sc_t, cut_transfer: total_ct, under_budget: total_ub }
+          const invInit: PendingRow = { budget: si_b, target: si_t, cut_transfer: 0, under_budget: 0 }
+          return (
+            <Fragment key={year}>
+              {makeVirtualCell("budget", "ผูกพัน", year, commInit)}
+              {makeVirtualCell("budget", "ลงทุน", year, invInit)}
+              {comp(tb, `${year}-tb`)}
+              {makeVirtualCell("target", "ผูกพัน", year, commInit)}
+              {makeVirtualCell("target", "ลงทุน", year, invInit)}
+              {comp(tt, `${year}-tt`)}
+              {comp(cb - ct, `${year}-cr`)}
+              {comp(ib - it_, `${year}-ir`)}
+              {comp(tb - tt, `${year}-tr`)}
+              {makeVirtualCell("cut_transfer", "ผูกพัน", year, commInit)}
+              {makeVirtualCell("under_budget", "ผูกพัน", year, commInit)}
             </Fragment>
           )
         })}
@@ -1007,13 +1223,124 @@ export default function ProjectPage() {
                   <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse" }}>
                     {makeTableHeader()}
                     <tbody>
-                      {subJobGroups.length === 0 && <tr><td colSpan={1 + allYears.length * COLS_PER_YEAR} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
-                      {subJobGroups.map((g) => renderGroupRow(g.name, g.sort_order, g.years, "sj"))}
-                      {subJobGroups.length > 0 && renderTotalsRow(sjYearTotal, true)}
+                      {!hasVirtualSjRow && activeSjGroups.length === 0 && newSjNames.length === 0 && <tr><td colSpan={1 + allYears.length * COLS_PER_YEAR} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
+                      {hasVirtualSjRow && renderVirtualSubJobRow()}
+                      {activeSjGroups.map((g) => renderGroupRow(g.name, g.sort_order, g.years, "sj"))}
+                      {newSjNames.map((name) => renderGroupRow(name, null, [], "sj"))}
+                      {(activeSjGroups.length > 0 || newSjNames.length > 0 || hasVirtualSjRow) && renderTotalsRow(sjYearTotal, true)}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {/* Sub-job management */}
+              {!isScenario && (
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSjMgmtOpen(v => !v)}
+                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6B7280", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style={{ transform: sjMgmtOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>
+                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                    จัดการงานย่อย
+                  </button>
+
+                  {sjMgmtOpen && (() => {
+                    const remainingAfterDelete = activeSjGroups.length + newSjNames.length
+                    const wouldBeEmpty = remainingAfterDelete === 0
+                    return (
+                      <div style={{ marginTop: 8, background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: "12px 16px", maxWidth: 480 }}>
+                        {/* Add row */}
+                        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                          <input
+                            value={sjNameInput}
+                            onChange={e => setSjNameInput(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === "Enter") {
+                                const name = sjNameInput.trim()
+                                if (name && !subJobGroups.some(g => g.name === name) && !newSjNames.includes(name)) {
+                                  setNewSjNames(prev => [...prev, name])
+                                  setSjNameInput("")
+                                }
+                              }
+                            }}
+                            placeholder="ชื่องานย่อยใหม่"
+                            style={{ flex: 1, fontSize: 12, border: "1px solid #D1D5DB", borderRadius: 5, padding: "4px 8px", outline: "none" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const name = sjNameInput.trim()
+                              if (name && !subJobGroups.some(g => g.name === name) && !newSjNames.includes(name)) {
+                                setNewSjNames(prev => [...prev, name])
+                                setSjNameInput("")
+                              }
+                            }}
+                            style={{ fontSize: 12, padding: "4px 12px", background: "#3B82F6", color: "#fff", border: "none", borderRadius: 5, cursor: "pointer" }}
+                          >+ เพิ่ม</button>
+                        </div>
+
+                        {/* Existing DB sub-jobs */}
+                        {subJobGroups.map(g => {
+                          const isDeleted = deletedSjNames.has(g.name)
+                          const willBeEmpty = !isDeleted && activeSjGroups.length === 1 && newSjNames.length === 0
+                          return (
+                            <div key={g.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, padding: "3px 0" }}>
+                              <span style={{ flex: 1, fontSize: 12, color: isDeleted ? "#9CA3AF" : "#374151", textDecoration: isDeleted ? "line-through" : "none" }}>{g.name}</span>
+                              {isDeleted ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletedSjNames(prev => { const n = new Set(prev); n.delete(g.name); return n })}
+                                  style={{ fontSize: 11, padding: "2px 8px", background: "#F3F4F6", color: "#6B7280", border: "1px solid #D1D5DB", borderRadius: 4, cursor: "pointer" }}
+                                >↩ undo</button>
+                              ) : (
+                                <>
+                                  {willBeEmpty && (
+                                    <span style={{ fontSize: 11, color: "#F59E0B" }}>⚠ จะไม่มีงานย่อย</span>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeletedSjNames(prev => new Set([...prev, g.name]))}
+                                    style={{ fontSize: 11, padding: "2px 8px", background: "#FEF2F2", color: "#EF4444", border: "1px solid #FCA5A5", borderRadius: 4, cursor: "pointer" }}
+                                  >ลบ</button>
+                                </>
+                              )}
+                            </div>
+                          )
+                        })}
+
+                        {/* New (unsaved) sub-jobs */}
+                        {newSjNames.map(name => (
+                          <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, padding: "3px 0" }}>
+                            <span style={{ flex: 1, fontSize: 12, color: "#374151" }}>{name}</span>
+                            <span style={{ fontSize: 10, color: "#3B82F6", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 3, padding: "1px 5px" }}>ใหม่</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewSjNames(prev => prev.filter(n => n !== name))
+                                setPendingNew(prev => {
+                                  const n = new Map(prev)
+                                  for (const k of [...n.keys()]) { if (k.startsWith(`sj-new|${name}|`)) n.delete(k) }
+                                  return n
+                                })
+                              }}
+                              style={{ fontSize: 11, padding: "2px 8px", background: "#FEF2F2", color: "#EF4444", border: "1px solid #FCA5A5", borderRadius: 4, cursor: "pointer" }}
+                            >ลบ</button>
+                          </div>
+                        ))}
+
+                        {wouldBeEmpty && (
+                          <div style={{ marginTop: 8, fontSize: 11, color: "#B45309", background: "#FFFBEB", border: "1px solid #FCD34D", borderRadius: 5, padding: "6px 10px" }}>
+                            ⚠ ไม่มีงานย่อย — แถว scratch จะถูกใช้แทน
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
             </section>
 
             {/* Budget Sources */}
@@ -1183,7 +1510,7 @@ export default function ProjectPage() {
           <div style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={() => { setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setEditState(null) }}
+            onClick={() => { setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setEditState(null); setNewSjNames([]); setDeletedSjNames(new Set()) }}
             style={{ padding: "6px 16px", background: "transparent", color: "#94A3B8", border: "1px solid #475569", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
           >
             Discard

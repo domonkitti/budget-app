@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { api } from "@/lib/api"
 import type { FlatProject, FilterOptions } from "@/lib/types"
 import SummaryCharts from "@/components/SummaryCharts"
@@ -22,6 +22,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [tableFilteredData, setTableFilteredData] = useState<{ base: FlatProject[]; data: FlatProject[] } | null>(null)
   const tableRef = useRef<BudgetTableHandle>(null)
 
   const data = viewMode.kind === "snapshot"
@@ -52,6 +53,20 @@ export default function Home() {
       ),
     )
   }, [activeYears, data])
+  const summaryData = tableFilteredData?.base === visibleData ? tableFilteredData.data : visibleData
+
+  const handleTableFilteredDataChange = useCallback((nextData: FlatProject[]) => {
+    setTableFilteredData((current) => {
+      if (
+        current?.base === visibleData &&
+        current.data.length === nextData.length &&
+        current.data.every((project, index) => project.id === nextData[index]?.id)
+      ) {
+        return current
+      }
+      return { base: visibleData, data: nextData }
+    })
+  }, [visibleData])
 
   useEffect(() => {
     api.filterOptions().then(setOptions).catch(() => {})
@@ -229,8 +244,13 @@ export default function Home() {
         )}
         {!loading && !error && (
           <>
-            <SummaryCharts data={visibleData} />
-            <BudgetTable ref={tableRef} data={visibleData} years={activeYears} />
+            <SummaryCharts data={summaryData} years={activeYears} />
+            <BudgetTable
+              ref={tableRef}
+              data={visibleData}
+              years={activeYears}
+              onFilteredDataChange={handleTableFilteredDataChange}
+            />
           </>
         )}
       </main>
