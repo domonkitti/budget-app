@@ -99,12 +99,12 @@ function EditableCell({
       style={{
         display: "block", textAlign: "right", padding: "2px 6px", borderRadius: 4,
         cursor: "text", fontFamily: "monospace", minWidth: 100,
-        background: isUndo ? "#FEE2E2" : isPending ? "#FEF9C3" : "transparent",
+        background: isPending ? "#FEF9C3" : "transparent",
         fontWeight: isPending ? 600 : undefined,
-        color: isUndo ? "#B91C1C" : value === 0 && !isPending ? "#9CA3AF" : undefined,
+        color: value === 0 && !isPending ? "#9CA3AF" : undefined,
       }}
-      onMouseEnter={(e) => { if (!isPending && !isUndo) (e.currentTarget as HTMLElement).style.background = "#EEF2FF" }}
-      onMouseLeave={(e) => { if (!isPending && !isUndo) (e.currentTarget as HTMLElement).style.background = "transparent" }}
+      onMouseEnter={(e) => { if (!isPending) (e.currentTarget as HTMLElement).style.background = "#EEF2FF" }}
+      onMouseLeave={(e) => { if (!isPending) (e.currentTarget as HTMLElement).style.background = "transparent" }}
     >
       {value === 0 ? "0.000" : fmt3(value)}
     </span>
@@ -136,6 +136,7 @@ export default function ProjectPage() {
   const [history, setHistory] = useState<ChangeLogEntry[]>([])
   const [historyOpen, setHistoryOpen] = useState(false)
   const [undoKeys, setUndoKeys] = useState<Set<string>>(new Set())
+  const [directEditCells, setDirectEditCells] = useState<Set<string>>(new Set())
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set())
   const [editingBatch, setEditingBatch] = useState<string | null>(null)
   const [batchCommentInput, setBatchCommentInput] = useState("")
@@ -221,7 +222,7 @@ export default function ProjectPage() {
     try { setHistory(await api.projectHistory(code)) } catch {}
   }, [code, isScenario])
 
-  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); load() }, [load])
+  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
 
 
@@ -243,14 +244,34 @@ export default function ProjectPage() {
   function scrollToCol(year: number, field: string, fund_type: string) {
     const colId = `col-${year}-${field}-${fund_type}`
     setBlinkCol(colId)
-    document.querySelectorAll(`[data-col="${colId}"]`).forEach(el => {
-      const container = (el as HTMLElement).closest("[data-scroll-container]") as HTMLElement | null
-      if (!container) return
-      const elRect = el.getBoundingClientRect()
-      const cRect = container.getBoundingClientRect()
-      container.scrollTo({ left: Math.max(0, container.scrollLeft + elRect.left - cRect.left - cRect.width / 2 + elRect.width / 2), behavior: "smooth" })
-    })
-    setTimeout(() => setBlinkCol(null), 900)
+
+    const doScroll = () => {
+      // Find the th inside the first scroll container and measure its content-left position
+      const containers = Array.from(document.querySelectorAll<HTMLElement>("[data-scroll-container]"))
+      if (containers.length === 0) return
+      const c0 = containers[0]
+      const th = c0.querySelector<HTMLElement>(`[data-col="${colId}"]`)
+      if (!th) return
+      // th's absolute position within scroll content (independent of current scrollLeft)
+      const thContentLeft = th.getBoundingClientRect().left - c0.getBoundingClientRect().left + c0.scrollLeft
+      const target = Math.max(0, thContentLeft - c0.clientWidth / 2 + th.offsetWidth / 2)
+      // Apply the same target to all containers so scroll-sync doesn't fight
+      containers.forEach(c => c.scrollTo({ left: target, behavior: "smooth" }))
+    }
+
+    const section = document.querySelector<HTMLElement>(`[data-col="${colId}"]`)?.closest("section")
+    if (section) {
+      const r = section.getBoundingClientRect()
+      const offScreen = r.bottom < 0 || r.top > window.innerHeight
+      if (offScreen) {
+        section.scrollIntoView({ behavior: "smooth", block: "nearest" })
+        setTimeout(doScroll, 400)
+        setTimeout(() => setBlinkCol(null), 1400)
+        return
+      }
+    }
+    doScroll()
+    setTimeout(() => setBlinkCol(null), 1200)
   }
 
   // ── Pending edit helpers ───────────────────────────────────────────────────
@@ -370,10 +391,10 @@ export default function ProjectPage() {
           nextUpdated.under_budget === nextComm.under_budget
         if (isOriginal) {
           extraDeletes.push(nextKey)
-          break
+        } else {
+          extraPending.set(nextKey, nextUpdated)
         }
-        extraPending.set(nextKey, nextUpdated)
-        // Continue cascade: next year's ผูกพัน budget is carryForward
+        // Continue cascade regardless — needed to clear stale pending in downstream years
         curYear = nextYear
         curFundType = "ผูกพัน"
         curBudget = carryForward
@@ -435,6 +456,11 @@ export default function ProjectPage() {
         n.delete(`${key}|${field}`)
         return n
       })
+      setDirectEditCells((prev) => {
+        const n = new Set(prev)
+        if (isEmpty) n.delete(`${key}|${field}`); else n.add(`${key}|${field}`)
+        return n
+      })
       if (extraPending.size > 0 || extraDeletes.length > 0) {
         setPending((prev) => {
           const n = new Map(prev)
@@ -489,6 +515,11 @@ export default function ProjectPage() {
     setUndoKeys((prev) => {
       const n = new Set(prev)
       n.delete(`${key}|${field}`)
+      return n
+    })
+    setDirectEditCells((prev) => {
+      const n = new Set(prev)
+      if (isOriginal) n.delete(`${key}|${field}`); else n.add(`${key}|${field}`)
       return n
     })
     setEditState(null)
@@ -556,6 +587,7 @@ export default function ProjectPage() {
       setPending(new Map())
       setPendingNew(new Map())
       setUndoKeys(new Set())
+      setDirectEditCells(new Set())
       setSaveComment("")
       setNewSjNames([])
       setDeletedSjNames(new Set())
@@ -694,8 +726,9 @@ export default function ProjectPage() {
       for (const [key, np] of pendingNew) {
         if (!key.startsWith("sj-new|")) continue
         const [, , yrStr, fundType] = key.split("|")
-        add(sj, `${fundType}|${parseInt(yrStr)}|budget`, np.budget)
-        add(sj, `${fundType}|${parseInt(yrStr)}|target`, np.target)
+        const year = parseInt(yrStr)
+        add(sj, `${fundType}|${year}|budget`, np.budget)
+        if (directEditCells.has(`${key}|target`)) add(sj, `${fundType}|${year}|target`, np.target)
       }
     }
     for (const g of sourceGroups) {
@@ -733,6 +766,7 @@ export default function ProjectPage() {
   })()
 
   const hasMismatch = sumMismatches.length > 0
+  const mismatchSet = new Set(sumMismatches.map(m => `${m.fund_type}|${m.data_year}|${m.field}`))
   const visibleHistory = history.filter(isHistoryVisible).slice(0, 20)
 
   // Per-year total helpers
@@ -774,9 +808,9 @@ export default function ProjectPage() {
       const pni = pendingNew.get(`sj-new|${DEFAULT_VIRTUAL_SJ_NAME}|${year}|ลงทุน`)
       const bst = bsYearTotal(year)
       sc_b += pnc?.budget ?? bst.sc_b
-      sc_t += pnc?.target ?? bst.sc_t
+      sc_t += directEditCells.has(`sj-new|${DEFAULT_VIRTUAL_SJ_NAME}|${year}|ผูกพัน|target`) ? (pnc?.target ?? bst.sc_t) : bst.sc_t
       si_b += pni?.budget ?? bst.si_b
-      si_t += pni?.target ?? bst.si_t
+      si_t += directEditCells.has(`sj-new|${DEFAULT_VIRTUAL_SJ_NAME}|${year}|ลงทุน|target`) ? (pni?.target ?? bst.si_t) : bst.si_t
       const adjPn = pnc ?? pni
       total_ct += adjPn ? adjPn.cut_transfer : bst.total_ct
       total_ub += adjPn ? adjPn.under_budget : bst.total_ub
@@ -825,7 +859,7 @@ export default function ProjectPage() {
       const np = pendingNew.get(vKey)
       const effVal = np?.[field] ?? 0
       const isEd = editState?.key === vKey && editState?.field === field
-      const isPend = !!np
+      const isPend = directEditCells.has(`${vKey}|${field}`)
       return (
         <td key={`${vKey}-${field}`} style={{ ...td(), padding: 0 }}>
           <EditableCell
@@ -849,7 +883,7 @@ export default function ProjectPage() {
     }
     const key = `${prefix}-${row.id}`
     const isEd = editState?.key === key && editState?.field === field
-    const isPend = pending.has(key)
+    const isPend = directEditCells.has(`${key}|${field}`)
     const effVal = effectiveValue(row, prefix, field)
     return (
       <td key={`${key}-${field}`} style={{ ...td(), padding: 0 }}>
@@ -979,8 +1013,8 @@ export default function ProjectPage() {
 
   // Totals row — per year
   function renderTotalsRow(totalFn: (year: number) => YearTotal, isSj: boolean) {
-    const T = (v: number, key: string): React.ReactNode => (
-      <td key={key} style={{ ...td(), textAlign: "right", fontFamily: "monospace", fontWeight: 700, background: "#F0FDF4", color: v < 0 ? "#DC2626" : "#166534" }}>{fmt3(v)}</td>
+    const T = (v: number, key: string, red = false): React.ReactNode => (
+      <td key={key} style={{ ...td(), textAlign: "right", fontFamily: "monospace", fontWeight: 700, background: red ? "#FEE2E2" : "#F0FDF4", color: red ? "#DC2626" : v < 0 ? "#DC2626" : "#166534" }}>{fmt3(v)}</td>
     )
     const na = (k: string) => <td key={k} style={{ ...td(), textAlign: "right", color: "#D1D5DB", background: "#F0FDF4" }}>—</td>
     return (
@@ -989,10 +1023,11 @@ export default function ProjectPage() {
         {allYears.map(year => {
           const { sc_b, si_b, sc_t, si_t, total_ct, total_ub } = totalFn(year)
           const tb = sc_b + si_b; const tt = sc_t + si_t
+          const mm = (ft: string, f: string) => mismatchSet.has(`${ft}|${year}|${f}`)
           return (
             <Fragment key={year}>
-              {T(sc_b, `${year}-sc_b`)}{T(si_b, `${year}-si_b`)}{T(tb, `${year}-tb`)}
-              {T(sc_t, `${year}-sc_t`)}{T(si_t, `${year}-si_t`)}{T(tt, `${year}-tt`)}
+              {T(sc_b, `${year}-sc_b`, mm("ผูกพัน", "budget"))}{T(si_b, `${year}-si_b`, mm("ลงทุน", "budget"))}{T(tb, `${year}-tb`)}
+              {T(sc_t, `${year}-sc_t`, mm("ผูกพัน", "target"))}{T(si_t, `${year}-si_t`, mm("ลงทุน", "target"))}{T(tt, `${year}-tt`)}
               {T(sc_b - sc_t, `${year}-cr`)}{T(si_b - si_t, `${year}-ir`)}{T(tb - tt, `${year}-tr`)}
               {isSj || total_ct !== 0 ? T(total_ct, `${year}-tct`) : na(`${year}-tct`)}
               {isSj || total_ub !== 0 ? T(total_ub, `${year}-tub`) : na(`${year}-tub`)}
@@ -1015,9 +1050,10 @@ export default function ProjectPage() {
     function makeVirtualCell(field: EditField, fundType: string, year: number, initValues: PendingRow) {
       const vKey = `${prefix}-new|${groupName}|${year}|${fundType}`
       const np = pendingNew.get(vKey)
-      const effVal = np?.[field] ?? initValues[field]
       const isEd = editState?.key === vKey && editState?.field === field
-      const isPend = !!np
+      const isPend = directEditCells.has(`${vKey}|${field}`)
+      // For target: cascade may create np with target=0; only use it if user explicitly edited
+      const effVal = (field === "target" && !isPend) ? initValues[field] : (np?.[field] ?? initValues[field])
       return (
         <td key={`${vKey}-${field}`} style={{ ...td(), padding: 0, background: !np ? "#F0F9FF" : "transparent" }}>
           <EditableCell
@@ -1031,7 +1067,7 @@ export default function ProjectPage() {
                 n.set(vKey, { ...initValues, project_id: project!.id, name_or_source: groupName, sort_order: null, fund_type: fundType, data_year: year, prefix })
                 return n
               })
-              setEditState({ key: vKey, field, value: String(np?.[field] ?? initValues[field]) })
+              setEditState({ key: vKey, field, value: String(effVal) })
             }}
             onChange={(v) => setEditState((s) => s ? { ...s, value: v } : s)}
             onCommit={commitEdit} onCancel={() => setEditState(null)}
@@ -1051,9 +1087,9 @@ export default function ProjectPage() {
           const pnc = pendingNew.get(`${prefix}-new|${groupName}|${year}|ผูกพัน`)
           const pni = pendingNew.get(`${prefix}-new|${groupName}|${year}|ลงทุน`)
           const cb = pnc?.budget ?? sc_b
-          const ct = pnc?.target ?? sc_t
+          const ct = directEditCells.has(`${prefix}-new|${groupName}|${year}|ผูกพัน|target`) ? (pnc?.target ?? sc_t) : sc_t
           const ib = pni?.budget ?? si_b
-          const it_ = pni?.target ?? si_t
+          const it_ = directEditCells.has(`${prefix}-new|${groupName}|${year}|ลงทุน|target`) ? (pni?.target ?? si_t) : si_t
           const tb = cb + ib; const tt = ct + it_
           const commInit: PendingRow = { budget: sc_b, target: sc_t, cut_transfer: total_ct, under_budget: total_ub }
           const invInit: PendingRow = { budget: si_b, target: si_t, cut_transfer: 0, under_budget: 0 }
@@ -1448,7 +1484,7 @@ export default function ProjectPage() {
                                           <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor" style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}>
                                             <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
                                           </svg>
-                                          <span style={{ fontFamily: "monospace", fontSize: 11, background: "#E0E7FF", color: "#3730A3", borderRadius: 3, padding: "1px 6px" }}>{g.entries.length} changes</span>
+                                          {g.entries.length > 1 && <span style={{ fontFamily: "monospace", fontSize: 11, background: "#E0E7FF", color: "#3730A3", borderRadius: 3, padding: "1px 6px" }}>{g.entries.length} changes</span>}
                                         </button>
                                         {isEditingComment ? (
                                           <form
@@ -1510,7 +1546,7 @@ export default function ProjectPage() {
           <div style={{ flex: 1 }} />
           <button
             type="button"
-            onClick={() => { setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setEditState(null); setNewSjNames([]); setDeletedSjNames(new Set()) }}
+            onClick={() => { setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setEditState(null); setNewSjNames([]); setDeletedSjNames(new Set()) }}
             style={{ padding: "6px 16px", background: "transparent", color: "#94A3B8", border: "1px solid #475569", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
           >
             Discard
@@ -1521,7 +1557,7 @@ export default function ProjectPage() {
             onClick={saveAll}
             style={{ padding: "6px 20px", background: saving ? "#475569" : "#3B82F6", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: saving ? "default" : "pointer" }}
           >
-            {saving ? "Saving…" : `Save ${pendingCount} changes`}
+            {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
       )}

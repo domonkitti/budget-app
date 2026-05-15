@@ -167,7 +167,19 @@ function DivisionFilter({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
+  const [draft, setDraft] = useState<Set<string> | null>(null)
+  const [addToFilter, setAddToFilter] = useState(false)
+  const [baseBeforeSearch, setBaseBeforeSearch] = useState<Set<string> | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const selectAllRef = useRef<HTMLInputElement>(null)
+
+  function openDropdown() {
+    setDraft(selected.size === 0 ? null : new Set(selected))
+    setSearch("")
+    setAddToFilter(false)
+    setBaseBeforeSearch(null)
+    setOpen(true)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -179,32 +191,83 @@ function DivisionFilter({
   }, [open])
 
   const visible = allDivisions.filter((d) =>
-    d.toLowerCase().includes(search.toLowerCase()),
+    (d || "(none)").toLowerCase().includes(search.toLowerCase()),
   )
 
   const isAll = selected.size === 0
   const label =
     isAll ? "All"
     : selected.size === 1 ? [...selected][0]
-    : `${selected.size} of ${allDivisions.length}`
+    : `${selected.size} / ${allDivisions.length}`
 
-  function toggle(div: string) {
-    const next = new Set(selected)
-    if (next.has(div)) next.delete(div)
-    else next.add(div)
-    onChange(next)
+  const draftIsAll = draft === null
+  const checkedVal = (div: string) => draftIsAll || draft!.has(div)
+  const allVisibleChecked = visible.length > 0 && visible.every((d) => checkedVal(d))
+  const someVisibleChecked = visible.some((d) => checkedVal(d))
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allVisibleChecked && someVisibleChecked
+    }
+  })
+
+  function applySearch(query: string, add: boolean, base: Set<string> | null) {
+    const matches = new Set(
+      allDivisions.filter((d) => (d || "(none)").toLowerCase().includes(query.toLowerCase())),
+    )
+    if (add) {
+      const merged = base === null ? new Set(allDivisions) : new Set(base)
+      matches.forEach((m) => merged.add(m))
+      setDraft(merged.size === allDivisions.length ? null : merged)
+    } else {
+      setDraft(matches.size === allDivisions.length ? null : matches)
+    }
   }
 
-  function selectAll() { onChange(new Set()) }
-  function clearAll() { onChange(new Set(allDivisions)) }
+  function handleSearch(val: string) {
+    setSearch(val)
+    if (val) {
+      if (search === "") { setBaseBeforeSearch(draft); applySearch(val, addToFilter, draft) }
+      else applySearch(val, addToFilter, baseBeforeSearch)
+    } else {
+      setDraft(baseBeforeSearch)
+      setBaseBeforeSearch(null)
+    }
+  }
 
-  const checked = (div: string) => isAll || selected.has(div)
+  function handleAddToFilter(checked: boolean) {
+    setAddToFilter(checked)
+    if (search) applySearch(search, checked, baseBeforeSearch)
+  }
+
+  function toggle(div: string) {
+    const current = draftIsAll ? new Set(allDivisions) : new Set(draft!)
+    if (current.has(div)) current.delete(div)
+    else current.add(div)
+    setDraft(current.size === allDivisions.length ? null : current)
+  }
+
+  function toggleSelectAll() {
+    const current = draftIsAll ? new Set(allDivisions) : new Set(draft!)
+    if (allVisibleChecked) {
+      visible.forEach((d) => current.delete(d))
+      setDraft(current)
+    } else {
+      visible.forEach((d) => current.add(d))
+      setDraft(current.size === allDivisions.length ? null : current)
+    }
+  }
+
+  function handleOK() {
+    onChange(!draft || draft.size === 0 || draft.size === allDivisions.length ? new Set() : new Set(draft))
+    setOpen(false)
+  }
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={openDropdown}
         style={{
           display: "flex",
           alignItems: "center",
@@ -241,6 +304,8 @@ function DivisionFilter({
             boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
             minWidth: 220,
             maxWidth: 320,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
           {/* Search */}
@@ -248,7 +313,7 @@ function DivisionFilter({
             <input
               autoFocus
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearch(e.target.value)}
               placeholder="Search division…"
               style={{
                 width: "100%",
@@ -262,60 +327,39 @@ function DivisionFilter({
             />
           </div>
 
-          {/* Select all / clear */}
-          <div
-            style={{
-              display: "flex",
-              gap: 0,
-              padding: "4px 10px",
-              borderBottom: "1px solid #F3F4F6",
-            }}
-          >
-            <button
-              type="button"
-              onClick={selectAll}
+          {/* List with (Select All) pinned */}
+          <div style={{ maxHeight: 240, overflowY: "auto" }}>
+            <label
               style={{
-                background: "none",
-                border: "none",
-                fontSize: 11,
-                color: "#6366F1",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "6px 14px",
                 cursor: "pointer",
-                padding: "2px 4px",
+                fontSize: 13,
                 fontWeight: 600,
+                color: "#374151",
+                borderBottom: "1px solid #F3F4F6",
+                background: "#F9FAFB",
+                position: "sticky",
+                top: 0,
               }}
             >
-              Select all
-            </button>
-            <span style={{ color: "#D1D5DB", fontSize: 11, alignSelf: "center" }}>·</span>
-            <button
-              type="button"
-              onClick={clearAll}
-              style={{
-                background: "none",
-                border: "none",
-                fontSize: 11,
-                color: "#6B7280",
-                cursor: "pointer",
-                padding: "2px 4px",
-              }}
-            >
-              Clear
-            </button>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "#9CA3AF", alignSelf: "center" }}>
-              {selected.size === 0 ? `${allDivisions.length} selected` : `${allDivisions.length - selected.size} selected`}
-            </span>
-          </div>
-
-          {/* List */}
-          <div style={{ maxHeight: 240, overflowY: "auto", padding: "4px 0" }}>
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allVisibleChecked}
+                onChange={toggleSelectAll}
+                style={{ accentColor: "#6366F1", width: 14, height: 14, cursor: "pointer" }}
+              />
+              (Select All)
+            </label>
             {visible.length === 0 && (
-              <div style={{ padding: "12px 14px", fontSize: 12, color: "#9CA3AF" }}>
-                No results
-              </div>
+              <div style={{ padding: "12px 14px", fontSize: 12, color: "#9CA3AF" }}>No results</div>
             )}
             {visible.map((div) => (
               <label
-                key={div}
+                key={div || "__none__"}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -324,18 +368,49 @@ function DivisionFilter({
                   cursor: "pointer",
                   fontSize: 13,
                   color: "#374151",
-                  background: checked(div) ? "#F9FAFB" : "transparent",
+                  background: checkedVal(div) ? "#F9FAFB" : "transparent",
                 }}
               >
                 <input
                   type="checkbox"
-                  checked={checked(div)}
+                  checked={checkedVal(div)}
                   onChange={() => toggle(div)}
                   style={{ accentColor: "#6366F1", width: 14, height: 14, cursor: "pointer" }}
                 />
                 {div || <span style={{ color: "#9CA3AF", fontStyle: "italic" }}>(none)</span>}
               </label>
             ))}
+          </div>
+
+          {/* Add current selection to filter (only when search is active) */}
+          {search && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 14px 6px", borderTop: "1px solid #F3F4F6", cursor: "pointer", fontSize: 12, color: "#6B7280" }}>
+              <input
+                type="checkbox"
+                checked={addToFilter}
+                onChange={(e) => handleAddToFilter(e.target.checked)}
+                style={{ accentColor: "#6366F1", width: 12, height: 12, cursor: "pointer" }}
+              />
+              Add current selection to filter
+            </label>
+          )}
+
+          {/* OK / Cancel */}
+          <div style={{ padding: "6px 10px", borderTop: "1px solid #F3F4F6", display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 5, padding: "3px 12px", fontSize: 12, color: "#6B7280", cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleOK}
+              style={{ background: "#6366F1", border: "none", borderRadius: 5, padding: "3px 12px", fontSize: 12, color: "#fff", cursor: "pointer", fontWeight: 600 }}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
@@ -358,6 +433,7 @@ export default function CategorySummaryPage() {
   const [yearTo, setYearTo] = useState(String(currentBEYear + 2))
   const [activeMetrics, setActiveMetrics] = useState<Metric[]>(["budget", "target"])
   const [selectedDivisions, setSelectedDivisions] = useState<Set<string>>(new Set())
+  const [allocFilter, setAllocFilter] = useState<"all" | "allocated" | "unallocated">("all")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [exporting, setExporting] = useState(false)
@@ -630,13 +706,31 @@ export default function CategorySummaryPage() {
     return projects.filter((p) => p.division && selectedDivisions.has(p.division))
   }, [projects, selectedDivisions])
 
-  const allocatedCount = useMemo(() => {
-    return filteredProjects.filter((p) => {
-      const jobs = uniqueJobsFromFlat(p)
-      if (jobs.length === 0) return (tableAllocations[projectKey(p.id)] ?? []).length > 0
-      return jobs.some((j) => (tableAllocations[jobKey(p.id, j.name)] ?? []).length > 0)
-    }).length
-  }, [filteredProjects, tableAllocations])
+  const isProjectAllocated = useCallback((p: FlatProject) => {
+    const jobs = uniqueJobsFromFlat(p)
+    if (jobs.length === 0) return (tableAllocations[projectKey(p.id)] ?? []).length > 0
+    return jobs.some((j) => (tableAllocations[jobKey(p.id, j.name)] ?? []).length > 0)
+  }, [tableAllocations])
+
+  const visibleProjects = useMemo(() => {
+    if (activeYears.length === 0) return filteredProjects
+    return filteredProjects.filter((p) =>
+      activeYears.some((year) =>
+        p.source_breakdown.some((entry) => entry.year === year && entry.budget > 0),
+      ),
+    )
+  }, [filteredProjects, activeYears])
+
+  const allocatedCount = useMemo(
+    () => visibleProjects.filter(isProjectAllocated).length,
+    [visibleProjects, isProjectAllocated],
+  )
+
+  const tableData = useMemo(() => {
+    if (allocFilter === "allocated") return visibleProjects.filter(isProjectAllocated)
+    if (allocFilter === "unallocated") return visibleProjects.filter((p) => !isProjectAllocated(p))
+    return visibleProjects
+  }, [visibleProjects, allocFilter, isProjectAllocated])
 
   const selectStyle: React.CSSProperties = {
     background: "#fff",
@@ -1126,16 +1220,40 @@ export default function CategorySummaryPage() {
             </div>
 
             <BudgetTable
-              data={filteredProjects}
+              data={tableData}
               years={activeYears}
               extraColumn={{
                 header: (
-                  <span>
-                    จัดสรร
-                    <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 400, color: "#6B7280" }}>
-                      ({allocatedCount}/{filteredProjects.length})
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <span>
+                      จัดสรร
+                      <span style={{ marginLeft: 4, fontSize: 10, fontWeight: 400, color: "#6B7280" }}>
+                        ({allocatedCount}/{visibleProjects.length})
+                      </span>
                     </span>
-                  </span>
+                    <div style={{ display: "flex", gap: 3 }}>
+                      {(["all", "allocated", "unallocated"] as const).map((f) => (
+                        <button
+                          key={f}
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setAllocFilter(f) }}
+                          style={{
+                            fontSize: 9,
+                            padding: "1px 5px",
+                            borderRadius: 4,
+                            border: allocFilter === f ? "1px solid #6366F1" : "1px solid #D1D5DB",
+                            background: allocFilter === f ? "#EEF2FF" : "#fff",
+                            color: allocFilter === f ? "#4338CA" : "#6B7280",
+                            cursor: "pointer",
+                            fontWeight: allocFilter === f ? 600 : 400,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {f === "all" ? "ทั้งหมด" : f === "allocated" ? "จัดสรรแล้ว" : "ยังไม่ได้จัดสรร"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ),
                 cell: (project) => {
                   const jobs = uniqueJobsFromFlat(project)

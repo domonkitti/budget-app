@@ -17,6 +17,7 @@ const GROUPS = [
   { key: "UnderBudget", label: "ต่ำกว่างบ" },
 ] as const
 
+
 const HMWAT_ORDER = [
   "หมวดสิ่งก่อสร้าง",
   "หมวดเครื่องจักรอุปกรณ์",
@@ -269,7 +270,20 @@ function PivotFilter({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
+  // null = all selected; Set = explicit (empty Set = none selected)
+  const [draft, setDraft] = useState<Set<string> | null>(null)
+  const [addToFilter, setAddToFilter] = useState(false)
+  const [baseBeforeSearch, setBaseBeforeSearch] = useState<Set<string> | null>(null)
   const ref = useRef<HTMLDivElement>(null)
+  const selectAllRef = useRef<HTMLInputElement>(null)
+
+  function openDropdown() {
+    setDraft(selected.size === 0 ? null : new Set(selected))
+    setSearch("")
+    setAddToFilter(false)
+    setBaseBeforeSearch(null)
+    setOpen(true)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -280,31 +294,85 @@ function PivotFilter({
     return () => document.removeEventListener("mousedown", onDown)
   }, [open])
 
+  const visible = allValues.filter((v) =>
+    (v || "(none)").toLowerCase().includes(search.toLowerCase()),
+  )
+
   const isAll = selected.size === 0
   const label =
     isAll ? "All"
     : selected.size === 1 ? ([...selected][0] || "(none)")
     : `${selected.size} / ${allValues.length}`
 
-  const visible = allValues.filter((v) =>
-    (v || "(none)").toLowerCase().includes(search.toLowerCase()),
-  )
+  const draftIsAll = draft === null
+  const checkedVal = (val: string) => draftIsAll || draft!.has(val)
+  const allVisibleChecked = visible.length > 0 && visible.every((v) => checkedVal(v))
+  const someVisibleChecked = visible.some((v) => checkedVal(v))
 
-  function toggle(val: string) {
-    const next = new Set(selected)
-    if (next.has(val)) next.delete(val)
-    else next.add(val)
-    if (next.size === allValues.length) onChange(new Set())
-    else onChange(next)
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allVisibleChecked && someVisibleChecked
+    }
+  })
+
+  function applySearch(query: string, add: boolean, base: Set<string> | null) {
+    const matches = new Set(
+      allValues.filter((v) => (v || "(none)").toLowerCase().includes(query.toLowerCase())),
+    )
+    if (add) {
+      const merged = base === null ? new Set(allValues) : new Set(base)
+      matches.forEach((m) => merged.add(m))
+      setDraft(merged.size === allValues.length ? null : merged)
+    } else {
+      setDraft(matches.size === allValues.length ? null : matches)
+    }
   }
 
-  const checked = (val: string) => isAll || selected.has(val)
+  function handleSearch(val: string) {
+    setSearch(val)
+    if (val) {
+      if (search === "") { setBaseBeforeSearch(draft); applySearch(val, addToFilter, draft) }
+      else applySearch(val, addToFilter, baseBeforeSearch)
+    } else {
+      setDraft(baseBeforeSearch)
+      setBaseBeforeSearch(null)
+    }
+  }
+
+  function handleAddToFilter(checked: boolean) {
+    setAddToFilter(checked)
+    if (search) applySearch(search, checked, baseBeforeSearch)
+  }
+
+  function toggle(val: string) {
+    const current = draftIsAll ? new Set(allValues) : new Set(draft!)
+    if (current.has(val)) current.delete(val)
+    else current.add(val)
+    setDraft(current.size === allValues.length ? null : current)
+  }
+
+  function toggleSelectAll() {
+    const current = draftIsAll ? new Set(allValues) : new Set(draft!)
+    if (allVisibleChecked) {
+      visible.forEach((v) => current.delete(v))
+      setDraft(current) // keeps empty Set as-is (= none selected)
+    } else {
+      visible.forEach((v) => current.add(v))
+      setDraft(current.size === allValues.length ? null : current)
+    }
+  }
+
+  function handleOK() {
+    // empty draft = user deselected everything → treat as "all" (no filter)
+    onChange(!draft || draft.size === 0 || draft.size === allValues.length ? new Set() : new Set(draft))
+    setOpen(false)
+  }
 
   return (
     <div ref={ref} style={{ position: "relative", width: "100%" }}>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={openDropdown}
         style={{
           display: "flex",
           alignItems: "center",
@@ -339,13 +407,16 @@ function PivotFilter({
             boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
             minWidth: 180,
             maxWidth: 300,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
+          {/* Search */}
           <div style={{ padding: "6px 8px", borderBottom: "1px solid #F3F4F6" }}>
             <input
               autoFocus
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => handleSearch(e.target.value)}
               placeholder="Search…"
               style={{
                 width: "100%",
@@ -358,27 +429,34 @@ function PivotFilter({
               }}
             />
           </div>
-          <div style={{ display: "flex", alignItems: "center", padding: "3px 10px 3px 8px", borderBottom: "1px solid #F3F4F6", gap: 2 }}>
-            <button
-              type="button"
-              onClick={() => onChange(new Set())}
-              style={{ background: "none", border: "none", fontSize: 10, color: "#6366F1", cursor: "pointer", padding: "1px 3px", fontWeight: 600 }}
+
+          {/* List with (Select All) pinned */}
+          <div style={{ maxHeight: 200, overflowY: "auto" }}>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 12px",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "#374151",
+                borderBottom: "1px solid #F3F4F6",
+                background: "#F9FAFB",
+                position: "sticky",
+                top: 0,
+              }}
             >
-              Select all
-            </button>
-            <span style={{ color: "#D1D5DB", fontSize: 10 }}>·</span>
-            <button
-              type="button"
-              onClick={() => onChange(new Set(visible))}
-              style={{ background: "none", border: "none", fontSize: 10, color: "#6B7280", cursor: "pointer", padding: "1px 3px" }}
-            >
-              Clear
-            </button>
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "#9CA3AF" }}>
-              {isAll ? allValues.length : selected.size} shown
-            </span>
-          </div>
-          <div style={{ maxHeight: 200, overflowY: "auto", padding: "2px 0" }}>
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={allVisibleChecked}
+                onChange={toggleSelectAll}
+                style={{ accentColor: "#6366F1", width: 12, height: 12, cursor: "pointer" }}
+              />
+              (Select All)
+            </label>
             {visible.length === 0 && (
               <div style={{ padding: "10px 12px", fontSize: 11, color: "#9CA3AF" }}>No results</div>
             )}
@@ -393,18 +471,49 @@ function PivotFilter({
                   cursor: "pointer",
                   fontSize: 12,
                   color: "#374151",
-                  background: checked(val) ? "#F9FAFB" : "transparent",
+                  background: checkedVal(val) ? "#F9FAFB" : "transparent",
                 }}
               >
                 <input
                   type="checkbox"
-                  checked={checked(val)}
+                  checked={checkedVal(val)}
                   onChange={() => toggle(val)}
                   style={{ accentColor: "#6366F1", width: 12, height: 12, cursor: "pointer" }}
                 />
                 {val || <span style={{ color: "#9CA3AF", fontStyle: "italic" }}>(none)</span>}
               </label>
             ))}
+          </div>
+
+          {/* Add current selection to filter (only when search is active) */}
+          {search && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px 5px", borderTop: "1px solid #F3F4F6", cursor: "pointer", fontSize: 11, color: "#6B7280" }}>
+              <input
+                type="checkbox"
+                checked={addToFilter}
+                onChange={(e) => handleAddToFilter(e.target.checked)}
+                style={{ accentColor: "#6366F1", width: 11, height: 11, cursor: "pointer" }}
+              />
+              Add current selection to filter
+            </label>
+          )}
+
+          {/* OK / Cancel */}
+          <div style={{ padding: "5px 8px", borderTop: "1px solid #F3F4F6", display: "flex", gap: 5, justifyContent: "flex-end" }}>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 4, padding: "2px 10px", fontSize: 11, color: "#6B7280", cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleOK}
+              style={{ background: "#6366F1", border: "none", borderRadius: 4, padding: "2px 10px", fontSize: 11, color: "#fff", cursor: "pointer", fontWeight: 600 }}
+            >
+              OK
+            </button>
           </div>
         </div>
       )}
@@ -510,6 +619,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   )
   const leftColSpan =
     2 +
+    Number(Boolean(extraColumn)) +
     Number(infoVis.code) +
     Number(infoVis.division) +
     Number(infoVis.department) +
@@ -846,16 +956,16 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   useImperativeHandle(ref, () => ({ exportCurrentView }))
 
   // Style helpers
-  const border = "0.5px solid #E5E7EB"
-  const headBg = "#F9FAFB"
+  const border = "1px solid #D1D5DB"
+  const headBorder = "1px solid #9CA3AF"
 
   const thBase: React.CSSProperties = {
-    border,
+    border: headBorder,
     padding: "5px 8px",
     textAlign: "center",
     fontWeight: 600,
-    color: "#6B7280",
-    background: headBg,
+    color: "#374151",
+    background: "#F3F4F6",
     whiteSpace: "nowrap",
     fontSize: 11,
     position: "sticky",
@@ -1195,11 +1305,11 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 <th style={{ ...thBase, top: row3Top, zIndex: 4, minWidth: 112 }}>
                   <button
                     type="button"
-                    style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: 11 }}
+                    style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#374151", cursor: "pointer", fontSize: 11 }}
                     onClick={cycleYearSort}
                   >
                     Start year{" "}
-                    <span style={{ fontSize: 9, color: "#6B7280" }}>{yearSortIcon()}</span>
+                    <span style={{ fontSize: 9 }}>{yearSortIcon()}</span>
                   </button>
                 </th>
               )}
@@ -1215,7 +1325,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                           >
                             <button
                               type="button"
-                              style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: 11 }}
+                              style={{ display: "inline-flex", width: "100%", alignItems: "center", justifyContent: "center", gap: 4, background: "none", border: "none", color: "#374151", cursor: "pointer", fontSize: 11 }}
                               onClick={() => cycleMoneySort(year, group.key, column.key)}
                             >
                               {column.label}{" "}
@@ -1239,6 +1349,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                   left: 0,
                   position: "sticky",
                   padding: "4px",
+                  background: "#F1F5F9",
                 }}
               />
               <th
@@ -1249,57 +1360,59 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                   left: 44,
                   position: "sticky",
                   padding: "4px",
+                  background: "#F1F5F9",
                 }}
               >
                 <PivotFilter allValues={allNames} selected={selNames} onChange={setSelNames} />
               </th>
-              {extraColumn && <th style={{ ...thBase, top: row4Top, zIndex: 4 }} />}
+              {extraColumn && <th style={{ ...thBase, top: row4Top, zIndex: 4, background: "#F1F5F9" }} />}
               {infoVis.code && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allCodes} selected={selCodes} onChange={setSelCodes} />
                 </th>
               )}
               {infoVis.division && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allDivisions} selected={selDivisions} onChange={setSelDivisions} />
                 </th>
               )}
               {infoVis.department && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allDepartments} selected={selDepartments} onChange={setSelDepartments} />
                 </th>
               )}
               {infoVis.group && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allGroups} selected={selGroups} onChange={setSelGroups} />
                 </th>
               )}
               {infoVis.type && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allTypes} selected={selTypes} onChange={setSelTypes} />
                 </th>
               )}
               {infoVis.year && (
-                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}>
+                <th style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px", background: "#F1F5F9" }}>
                   <PivotFilter allValues={allStartYears} selected={selYears} onChange={setSelYears} />
                 </th>
               )}
               {hasMoneyColumns &&
                 displayYears.map((year) => (
                   <Fragment key={year}>
-                    {visibleGroups.map((group) => (
-                      <Fragment key={`${year}-${group.key}-filters`}>
-                        {visibleFunds.map((column) => {
-                          const current =
-                            numFilters[filterKey(year, group.key, column.key)] ?? {
-                              min: "",
-                              max: "",
-                            }
-                          return (
-                            <th
-                              key={`${year}-${group.key}-${column.key}-filter`}
-                              style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}
-                            >
+                    {visibleGroups.map((group) => {
+                      return (
+                        <Fragment key={`${year}-${group.key}-filters`}>
+                          {visibleFunds.map((column) => {
+                            const current =
+                              numFilters[filterKey(year, group.key, column.key)] ?? {
+                                min: "",
+                                max: "",
+                              }
+                            return (
+                              <th
+                                key={`${year}-${group.key}-${column.key}-filter`}
+                                style={{ ...thBase, top: row4Top, zIndex: 4, padding: "4px" }}
+                              >
                               <div
                                 style={{
                                   display: "grid",
@@ -1339,11 +1452,12 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                                   }
                                 />
                               </div>
-                            </th>
-                          )
-                        })}
-                      </Fragment>
-                    ))}
+                              </th>
+                            )
+                          })}
+                        </Fragment>
+                      )
+                    })}
                   </Fragment>
                 ))}
             </tr>
