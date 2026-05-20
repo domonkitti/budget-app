@@ -18,7 +18,7 @@ const GROUPS = [
 ] as const
 
 
-const HMWAT_ORDER = [
+export const PROJECT_GROUPS = [
   "หมวดสิ่งก่อสร้าง",
   "หมวดเครื่องจักรอุปกรณ์",
   "หมวดเครื่องใช้สำนักงานและเครื่องมือเครื่องใช้ขนาดเล็ก",
@@ -27,6 +27,8 @@ const HMWAT_ORDER = [
   "หมวดสำรองราคา",
   "หมวดสำรองกรณีจำเป็นเร่งด่วน",
 ]
+
+const HMWAT_ORDER = PROJECT_GROUPS
 
 type Group = (typeof GROUPS)[number]["key"]
 type FundType = "ผูกพัน" | "ลงทุน"
