@@ -166,7 +166,6 @@ export default function Home() {
           <select
             className="border rounded-lg px-2 py-1 text-sm"
             value={yearFrom}
-            disabled={isFiltered}
             onChange={(e) => setYearFrom(e.target.value)}
           >
             <option value="">From</option>
@@ -178,7 +177,6 @@ export default function Home() {
           <select
             className="border rounded-lg px-2 py-1 text-sm"
             value={yearTo}
-            disabled={isFiltered}
             onChange={(e) => setYearTo(e.target.value)}
           >
             <option value="">To</option>
@@ -187,45 +185,7 @@ export default function Home() {
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Division</label>
-          <select className="border rounded-lg px-2 py-1 text-sm" value={division} disabled={isFiltered} onChange={(e) => setDivision(e.target.value)}>
-            <option value="">All</option>
-            {options.divisions.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Department</label>
-          <select className="border rounded-lg px-2 py-1 text-sm" value={department} disabled={isFiltered} onChange={(e) => setDepartment(e.target.value)}>
-            <option value="">All</option>
-            {options.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Group</label>
-          <select className="border rounded-lg px-2 py-1 text-sm" value={group} disabled={isFiltered} onChange={(e) => setGroup(e.target.value)}>
-            <option value="">All</option>
-            {options.groups.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Source</label>
-          <select
-            className="border rounded-lg px-2 py-1 text-sm"
-            value={source}
-            disabled={isFiltered}
-            onChange={(e) => setSource(e.target.value)}
-          >
-            <option value="">All sources</option>
-            {options.sources.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        {(source || division || department || group) && !isFiltered && (
-          <button onClick={() => { setSource(""); setDivision(""); setDepartment(""); setGroup("") }} className="text-xs text-gray-400 hover:text-gray-600 underline">
-            Clear filters
-          </button>
-        )}
-        {(yearFrom !== String(currentBEYear) || yearTo !== String(currentBEYear + 2)) && !isFiltered && (
+        {(yearFrom !== String(currentBEYear) || yearTo !== String(currentBEYear + 2)) && (
           <button
             onClick={() => { setYearFrom(String(currentBEYear)); setYearTo(String(currentBEYear + 2)) }}
             className="text-xs text-gray-400 hover:text-gray-600 underline"

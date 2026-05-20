@@ -5,7 +5,11 @@ import Link from "next/link"
 import { useParams } from "next/navigation"
 import { api } from "@/lib/api"
 import type { ProjectDetail, SubJob, BudgetSource, ChangeLogEntry } from "@/lib/types"
+import { PROJECT_GROUPS } from "@/components/BudgetTable"
 import { useViewMode } from "@/app/SnapshotProvider"
+import { SnapshotProjectView } from "./SnapshotView"
+
+const DEFAULT_VIRTUAL_SJ_NAME = "งานรวม"
 
 const fmt3 = (n: number) =>
   !n ? "—" : n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
@@ -117,6 +121,15 @@ function EditableCell({
 export default function ProjectPage() {
   const params = useParams<{ code: string }>()
   const code = decodeURIComponent(params.code)
+  const { viewMode } = useViewMode()
+  if (viewMode.kind === "snapshot") {
+    const snap = viewMode.data.find(p => p.project_code === code)
+    if (snap) return <SnapshotProjectView project={snap} snapshotLabel={viewMode.item.label} />
+  }
+  return <ProjectEditor code={code} />
+}
+
+function ProjectEditor({ code }: { code: string }) {
   const { viewMode } = useViewMode()
   const isScenario = viewMode.kind === "scenario"
   const scenarioId = isScenario ? viewMode.item.id : null
@@ -329,6 +342,10 @@ export default function ProjectPage() {
         return { budget: p?.budget ?? row.budget, target: p?.target ?? row.target }
       }
       const pn = pendingNew.get(`${prefix}-new|${groupName}|${year}|${fundType}`) ?? extraPendingNew.get(`${prefix}-new|${groupName}|${year}|${fundType}`)
+      if (!pn && prefix === "sj" && groupName === DEFAULT_VIRTUAL_SJ_NAME) {
+        const bst = bsYearTotal(year)
+        return fundType === "ผูกพัน" ? { budget: bst.sc_b, target: bst.sc_t } : { budget: bst.si_b, target: bst.si_t }
+      }
       return { budget: pn?.budget ?? 0, target: pn?.target ?? 0 }
     }
 
@@ -351,6 +368,19 @@ export default function ProjectPage() {
           const p = extraPending.get(key) ?? pending.get(key)
           ct += p?.cut_transfer ?? row.cut_transfer ?? 0
           ub += p?.under_budget ?? row.under_budget ?? 0
+        }
+      }
+      // Virtual SJ row: candidates are all null (no project.sub_jobs); pull ct/ub from the
+      // ผูกพัน pendingNew (which carries total_ct from commInit) or fall back to bsYearTotal.
+      if (candidates.every(c => !c) && prefix === "sj" && groupName === DEFAULT_VIRTUAL_SJ_NAME) {
+        if (source.fund_type === "ผูกพัน") {
+          ct = source.cut_transfer ?? 0
+          ub = source.under_budget ?? 0
+        } else {
+          const pnc = pendingNew.get(`sj-new|${groupName}|${year}|ผูกพัน`) ?? extraPendingNew.get(`sj-new|${groupName}|${year}|ผูกพัน`)
+          const bst = bsYearTotal(year)
+          ct = pnc?.cut_transfer ?? bst.total_ct
+          ub = pnc?.under_budget ?? bst.total_ub
         }
       }
       return { ct, ub }
@@ -425,6 +455,112 @@ export default function ProjectPage() {
     return { extraPending, extraDeletes, extraPendingNew }
   }
 
+  function makeSingleCounterpartRecalc(
+    source: RecalcSource,
+    extraPending: Map<string, PendingRow>,
+    extraPendingNew: Map<string, NewPendingRow>,
+  ) {
+    const mirrorPending = new Map<string, PendingRow>()
+    const mirrorDeletes: string[] = []
+    const mirrorPendingNew = new Map<string, NewPendingRow>()
+    if (!project) return { mirrorPending, mirrorDeletes, mirrorPendingNew }
+
+    const mirrorPrefix: "sj" | "bs" = source.prefix === "sj" ? "bs" : "sj"
+    const mirrorGroups = mirrorPrefix === "sj" ? activeSjGroups : sourceGroups
+    if (mirrorGroups.length !== 1) return { mirrorPending, mirrorDeletes, mirrorPendingNew }
+
+    const sourceRows = source.prefix === "sj" ? project.sub_jobs : project.budget_sources
+    const sourceNewPrefix = `${source.prefix}-new|`
+    const sourceRowKey = (row: SubJob | BudgetSource) => `${source.prefix}-${row.id}`
+    const sameSourceGroup = (row: SubJob | BudgetSource) =>
+      source.prefix === "sj" ? (row as SubJob).name === source.groupName : (row as BudgetSource).source === source.groupName
+    const sourceNewKey = `${source.prefix}-new|${source.groupName}|${source.data_year}|${source.fund_type}`
+    let commBudget = 0, commTarget = 0, investBudget = 0, investTarget = 0, totalCt = 0, totalUb = 0
+
+    const addVals = (fundType: string, vals: PendingRow) => {
+      if (fundType === "ผูกพัน") {
+        commBudget += vals.budget
+        commTarget += vals.target
+      } else if (fundType === "ลงทุน") {
+        investBudget += vals.budget
+        investTarget += vals.target
+      }
+      totalCt += vals.cut_transfer ?? 0
+      totalUb += vals.under_budget ?? 0
+    }
+
+    for (const row of sourceRows) {
+      if (row.data_year !== source.data_year) continue
+      const key = sourceRowKey(row)
+      const vals = sameSourceGroup(row) && row.fund_type === source.fund_type
+        ? source
+        : extraPending.get(key) ?? pending.get(key) ?? {
+          budget: row.budget,
+          target: row.target,
+          cut_transfer: row.cut_transfer ?? 0,
+          under_budget: row.under_budget ?? 0,
+        }
+      addVals(row.fund_type, vals)
+    }
+
+    for (const [key, row] of pendingNew) {
+      if (!key.startsWith(sourceNewPrefix) || row.data_year !== source.data_year) continue
+      const vals = key === sourceNewKey ? source : extraPendingNew.get(key) ?? row
+      addVals(row.fund_type, vals)
+    }
+    for (const [key, row] of extraPendingNew) {
+      if (!key.startsWith(sourceNewPrefix) || row.data_year !== source.data_year || pendingNew.has(key)) continue
+      addVals(row.fund_type, row)
+    }
+
+    const carryForward = (commBudget - commTarget) + (investBudget - investTarget) + totalCt + totalUb
+    const mirrorYear = source.data_year + 1
+    const mirrorGroup = mirrorGroups[0]
+    const mirrorName = mirrorPrefix === "sj" ? (mirrorGroup as SubJobGroup).name : (mirrorGroup as SourceGroup).source
+    const mirrorSortOrder = mirrorPrefix === "sj" ? (mirrorGroup as SubJobGroup).sort_order : null
+    const mirrorRows = mirrorPrefix === "sj" ? project.sub_jobs : project.budget_sources
+    const sameMirrorGroup = (row: SubJob | BudgetSource) =>
+      mirrorPrefix === "sj" ? (row as SubJob).name === mirrorName : (row as BudgetSource).source === mirrorName
+    const existing = mirrorRows.find(row => sameMirrorGroup(row) && row.fund_type === "ผูกพัน" && row.data_year === mirrorYear)
+
+    if (existing) {
+      const key = `${mirrorPrefix}-${existing.id}`
+      const base = pending.get(key) ?? {
+        budget: existing.budget,
+        target: existing.target,
+        cut_transfer: existing.cut_transfer ?? 0,
+        under_budget: existing.under_budget ?? 0,
+      }
+      const updated = { ...base, budget: carryForward }
+      const isOriginal =
+        updated.budget === existing.budget &&
+        updated.target === existing.target &&
+        updated.cut_transfer === (existing.cut_transfer ?? 0) &&
+        updated.under_budget === (existing.under_budget ?? 0)
+      if (isOriginal) mirrorDeletes.push(key)
+      else mirrorPending.set(key, updated)
+    } else {
+      const key = `${mirrorPrefix}-new|${mirrorName}|${mirrorYear}|ผูกพัน`
+      const existingNew = pendingNew.get(key) ?? extraPendingNew.get(key)
+      mirrorPendingNew.set(key, existingNew
+        ? { ...existingNew, budget: carryForward }
+        : {
+          budget: carryForward,
+          target: 0,
+          cut_transfer: 0,
+          under_budget: 0,
+          project_id: project.id,
+          name_or_source: mirrorName,
+          sort_order: mirrorSortOrder,
+          fund_type: "ผูกพัน",
+          data_year: mirrorYear,
+          prefix: mirrorPrefix,
+        })
+    }
+
+    return { mirrorPending, mirrorDeletes, mirrorPendingNew }
+  }
+
   function commitEdit() {
     if (!editState || !project) return
     const raw = editState.value.replace(/,/g, "").trim()
@@ -444,11 +580,17 @@ export default function ProjectPage() {
         groupName: updated.name_or_source,
         sort_order: updated.sort_order,
       })
+      const { mirrorPending, mirrorDeletes, mirrorPendingNew } = makeSingleCounterpartRecalc({
+        ...updated,
+        groupName: updated.name_or_source,
+        sort_order: updated.sort_order,
+      }, extraPending, extraPendingNew)
 
       setPendingNew((prev) => {
         const n = new Map(prev)
         if (isEmpty) n.delete(key); else n.set(key, updated)
         extraPendingNew.forEach((v, k) => n.set(k, v))
+        mirrorPendingNew.forEach((v, k) => n.set(k, v))
         return n
       })
       setUndoKeys((prev) => {
@@ -461,11 +603,13 @@ export default function ProjectPage() {
         if (isEmpty) n.delete(`${key}|${field}`); else n.add(`${key}|${field}`)
         return n
       })
-      if (extraPending.size > 0 || extraDeletes.length > 0) {
+      if (extraPending.size > 0 || extraDeletes.length > 0 || mirrorPending.size > 0 || mirrorDeletes.length > 0) {
         setPending((prev) => {
           const n = new Map(prev)
           extraPending.forEach((v, k) => n.set(k, v))
+          mirrorPending.forEach((v, k) => n.set(k, v))
           extraDeletes.forEach(k => n.delete(k))
+          mirrorDeletes.forEach(k => n.delete(k))
           return n
         })
       }
@@ -494,6 +638,14 @@ export default function ProjectPage() {
       fund_type: row.fund_type,
       data_year: row.data_year,
     })
+    const { mirrorPending, mirrorDeletes, mirrorPendingNew } = makeSingleCounterpartRecalc({
+      ...updated,
+      prefix: prefix as "sj" | "bs",
+      groupName,
+      sort_order: sortOrder,
+      fund_type: row.fund_type,
+      data_year: row.data_year,
+    }, extraPending, extraPendingNew)
 
     const isOriginal = updated.budget === row.budget && updated.target === row.target &&
       updated.cut_transfer === (row.cut_transfer ?? 0) && updated.under_budget === (row.under_budget ?? 0)
@@ -502,13 +654,16 @@ export default function ProjectPage() {
       const n = new Map(prev)
       if (isOriginal) n.delete(key); else n.set(key, updated)
       extraPending.forEach((v, k) => n.set(k, v))
+      mirrorPending.forEach((v, k) => n.set(k, v))
       extraDeletes.forEach(k => n.delete(k))
+      mirrorDeletes.forEach(k => n.delete(k))
       return n
     })
-    if (extraPendingNew.size > 0) {
+    if (extraPendingNew.size > 0 || mirrorPendingNew.size > 0) {
       setPendingNew((prev) => {
         const n = new Map(prev)
         extraPendingNew.forEach((v, k) => n.set(k, v))
+        mirrorPendingNew.forEach((v, k) => n.set(k, v))
         return n
       })
     }
@@ -682,7 +837,6 @@ export default function ProjectPage() {
     ...[...pendingNew.keys()].map(k => parseInt(k.split("|")[2])).filter(y => !isNaN(y)),
   ])].sort() : []
 
-  const DEFAULT_VIRTUAL_SJ_NAME = "งานรวม"
   const activeSjGroups = subJobGroups.filter(g => !deletedSjNames.has(g.name))
   const hasVirtualSjRow = activeSjGroups.length === 0 && newSjNames.length === 0 && allYears.length > 0
 
@@ -1175,9 +1329,11 @@ export default function ProjectPage() {
                   </label>
                   <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ fontSize: 10, color: "#6B7280", fontWeight: 600 }}>Group</span>
-                    <input value={infoForm.group_name} onChange={e => setInfoForm(f => ({ ...f, group_name: e.target.value }))}
-                      placeholder="–"
-                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", width: 160, outline: "none" }} />
+                    <select value={infoForm.group_name} onChange={e => setInfoForm(f => ({ ...f, group_name: e.target.value }))}
+                      style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", outline: "none" }}>
+                      <option value="">–</option>
+                      {PROJECT_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
                   </label>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
