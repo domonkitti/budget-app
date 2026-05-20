@@ -129,9 +129,11 @@ export default function ImportDiffPage() {
 
   const oldRows = project ? buildOldRows(project, diff) : []
   const newRows = project ? buildNewRows(project, diff) : []
-  const { groups: oldGroups, allYears: oldYears } = groupRows(oldRows)
+  const { groups: oldGroups } = groupRows(oldRows)
   const { groups: newGroups, allYears: newYears } = groupRows(newRows)
-  const allYears = [...new Set([...oldYears, ...newYears])].sort()
+  // Always use all BG years as the base so every year the project has shows up
+  const bgAllYears = project ? [...new Set(project.sub_jobs.map(s => s.data_year))].sort() : []
+  const allYears = [...new Set([...bgAllYears, ...newYears])].sort()
 
   // Preserve BG name order, add new at the end
   const bgNames = project ? [...new Set(project.sub_jobs.map(s => s.name))] : []
