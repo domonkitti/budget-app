@@ -114,6 +114,8 @@ export default function Navbar() {
   const navLinks = [
     { href: "/", label: "Overall" },
     { href: "/category", label: "Category" },
+    { href: "/compare", label: "Compare" },
+    { href: "/import", label: "Import" },
   ]
 
   // ── Mode indicator pill ──────────────────────────────────────────────────────

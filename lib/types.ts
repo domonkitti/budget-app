@@ -154,6 +154,46 @@ export type FilterOptions = {
   groups: string[]
 }
 
+export type ImportStatus = {
+  project_code: string
+  status: 'has_update' | 'new' | 'up_to_date'
+  last_accepted_version: number | null
+  last_accepted_at: string | null
+  po_version: number | null
+  po_updated_at: string | null
+}
+
+export type ImportLog = {
+  id: number
+  project_code: string
+  po_version: number
+  accepted_by: string
+  accepted_at: string
+  snapshot_json: unknown
+}
+
+export type FieldDiff = {
+  field: string
+  bg_value: unknown
+  po_value: unknown
+}
+
+export type SubJobDiff = {
+  name: string
+  fund_type: string
+  data_year: number
+  change: 'unchanged' | 'modified' | 'added' | 'removed'
+  diffs?: FieldDiff[]
+}
+
+export type ProjectDiff = {
+  project_code: string
+  po_version: number
+  has_changes: boolean
+  project_diffs: FieldDiff[]
+  sub_job_diffs: SubJobDiff[]
+}
+
 export type Project = {
   id: number
   project_code: string

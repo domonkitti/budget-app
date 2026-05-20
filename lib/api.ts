@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -194,4 +194,10 @@ export const api = {
     get<CategoryAllocationSelection[]>("/allocation-selections", { category_id: String(categoryId) }),
   setAllocationSelections: (categoryId: number, selections: CategoryAllocationSelection[]) =>
     put("/allocation-selections", { category_id: categoryId, selections }),
+
+  // Import
+  importVersions: () => get<ImportStatus[]>("/import/versions"),
+  importDiff: (code: string) => get<ProjectDiff>(`/import/project/${code}/diff`),
+  importAccept: (code: string) => post<{ ok: boolean; project_code: string; po_version: number }>(`/import/project/${code}/accept`, {}),
+  importLog: () => get<ImportLog[]>("/import/log"),
 }
