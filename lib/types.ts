@@ -237,3 +237,19 @@ export type ProjectDetail = Project & {
   sub_jobs: SubJob[]
   budget_sources: BudgetSource[]
 }
+
+export type ProjectOverviewItem = {
+  project_code: string
+  name: string
+  project_type: string
+  project_year: number
+  group_name: string | null
+  item_no: string | null
+  status: 'has_update' | 'new' | 'up_to_date' | 'budget_only'
+  full_plan_budget: number
+  active_year_budget: number
+}
+
+export type ActiveYearSetting = {
+  active_year: number
+}

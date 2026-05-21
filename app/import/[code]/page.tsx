@@ -6,7 +6,7 @@ import Link from "next/link"
 import { api } from "@/lib/api"
 import type { ProjectDiff, ProjectDetail } from "@/lib/types"
 
-// ── Styles (copied from edit page) ───────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────────
 const border = "0.5px solid #E5E7EB"
 const th = (extra?: React.CSSProperties): React.CSSProperties => ({
   border, padding: "5px 10px", background: "#F9FAFB", color: "#6B7280",
@@ -17,47 +17,88 @@ const td = (extra?: React.CSSProperties): React.CSSProperties => ({
 })
 
 const COL_GROUPS = [
-  { label: "งบเงินดำเนินการ",     field: "budget" as const, bg: "rgba(96,165,250,0.15)", sub: "rgba(96,165,250,0.08)" },
-  { label: "เป้าหมายการเบิกจ่าย", field: "target" as const, bg: "rgba(52,211,153,0.15)", sub: "rgba(52,211,153,0.08)" },
+  { label: "งบเงินดำเนินการ",     field: "budget"       as const, cols: 3, bg: "rgba(96,165,250,0.15)",  sub: "rgba(96,165,250,0.08)"  },
+  { label: "เป้าหมายการเบิกจ่าย", field: "target"       as const, cols: 3, bg: "rgba(52,211,153,0.15)",  sub: "rgba(52,211,153,0.08)"  },
+  { label: "คงเหลือ",              field: "remain"       as const, cols: 3, bg: "rgba(156,163,175,0.15)", sub: "rgba(156,163,175,0.08)" },
+  { label: "ตัดทิ้ง",             field: "cut_transfer" as const, cols: 1, bg: "rgba(251,146,60,0.15)",  sub: "rgba(251,146,60,0.08)"  },
+  { label: "ต่ำกว่างบ",           field: "under_budget" as const, cols: 1, bg: "rgba(167,139,250,0.15)", sub: "rgba(167,139,250,0.08)" },
 ]
+const COLS_PER_YEAR = COL_GROUPS.reduce((s, g) => s + g.cols, 0)
 
 const fieldLabel: Record<string, string> = {
   name: "ชื่อโครงการ", division: "ฝ่าย", department: "แผนก", group_name: "หมวด",
 }
 
 // ── Data helpers ──────────────────────────────────────────────────────────────
-type Row = { name: string; fund_type: string; data_year: number; budget: number | null; target: number | null }
+const VIRTUAL_SJ = "งานรวม"
+
+type NumField = "budget" | "target" | "cut_transfer" | "under_budget"
+type Row = { name: string; fund_type: string; data_year: number } & Record<NumField, number | null>
 type YearSlot = { committed: Row | null; invest: Row | null }
 type Groups = Map<string, Map<number, YearSlot>>
 
+const nullRow = (name: string, fund_type: string, data_year: number): Row =>
+  ({ name, fund_type, data_year, budget: null, target: null, cut_transfer: null, under_budget: null })
+
+function bsTotals(project: ProjectDetail): Row[] {
+  const totals = new Map<string, Record<NumField, number>>()
+  for (const bs of project.budget_sources) {
+    if (bs.fund_type !== "ผูกพัน" && bs.fund_type !== "ลงทุน") continue
+    const k = `${bs.data_year}|${bs.fund_type}`
+    const e = totals.get(k) ?? { budget: 0, target: 0, cut_transfer: 0, under_budget: 0 }
+    e.budget += bs.budget
+    e.target += bs.target
+    e.cut_transfer += bs.cut_transfer
+    e.under_budget += bs.under_budget
+    totals.set(k, e)
+  }
+  return [...totals.entries()].map(([k, v]) => {
+    const [yr, ft] = k.split("|")
+    return { name: VIRTUAL_SJ, fund_type: ft, data_year: Number(yr), ...v }
+  })
+}
+
 function buildOldRows(project: ProjectDetail, diff: ProjectDiff): Row[] {
-  const rows: Row[] = project.sub_jobs
-    .filter(sj => sj.fund_type === "ผูกพัน" || sj.fund_type === "ลงทุน")
-    .map(sj => ({ name: sj.name, fund_type: sj.fund_type, data_year: sj.data_year, budget: sj.budget, target: sj.target }))
-  // Placeholder for added rows so OLD table has matching rows
+  const rows: Row[] = project.sub_jobs.length === 0
+    ? bsTotals(project)
+    : project.sub_jobs
+        .filter(sj => sj.fund_type === "ผูกพัน" || sj.fund_type === "ลงทุน")
+        .map(sj => ({ name: sj.name, fund_type: sj.fund_type, data_year: sj.data_year, budget: sj.budget, target: sj.target, cut_transfer: sj.cut_transfer, under_budget: sj.under_budget }))
   for (const d of diff.sub_job_diffs) {
     if (d.change !== "added") continue
     if (!rows.find(r => r.name === d.name && r.fund_type === d.fund_type && r.data_year === d.data_year))
-      rows.push({ name: d.name, fund_type: d.fund_type, data_year: d.data_year, budget: null, target: null })
+      rows.push(nullRow(d.name, d.fund_type, d.data_year))
   }
   return rows
 }
 
 function buildNewRows(project: ProjectDetail, diff: ProjectDiff): Row[] {
+  const base: Row[] = project.sub_jobs.length === 0
+    ? bsTotals(project)
+    : project.sub_jobs
+        .filter(sj => sj.fund_type === "ผูกพัน" || sj.fund_type === "ลงทุน")
+        .map(sj => ({ name: sj.name, fund_type: sj.fund_type, data_year: sj.data_year, budget: sj.budget, target: sj.target, cut_transfer: sj.cut_transfer, under_budget: sj.under_budget }))
+
   const rows: Row[] = []
-  for (const sj of project.sub_jobs) {
-    if (sj.fund_type !== "ผูกพัน" && sj.fund_type !== "ลงทุน") continue
-    const d = diff.sub_job_diffs.find(x => x.name === sj.name && x.fund_type === sj.fund_type && x.data_year === sj.data_year)
-    if (d?.change === "removed") { rows.push({ name: sj.name, fund_type: sj.fund_type, data_year: sj.data_year, budget: null, target: null }); continue }
-    const bd = d?.diffs?.find(x => x.field === "budget")
-    const td_ = d?.diffs?.find(x => x.field === "target")
-    rows.push({ name: sj.name, fund_type: sj.fund_type, data_year: sj.data_year, budget: bd ? (bd.po_value as number) : sj.budget, target: td_ ? (td_.po_value as number) : sj.target })
+  const handled = new Set<string>()
+  for (const r of base) {
+    handled.add(`${r.name}|${r.fund_type}|${r.data_year}`)
+    const d = diff.sub_job_diffs.find(x => x.name === r.name && x.fund_type === r.fund_type && x.data_year === r.data_year)
+    if (d?.change === "removed") { rows.push(nullRow(r.name, r.fund_type, r.data_year)); continue }
+    const pv = (field: NumField) => d?.diffs?.find(x => x.field === field)?.po_value as number | undefined
+    rows.push({
+      ...r,
+      budget:       pv("budget")       ?? r.budget,
+      target:       pv("target")       ?? r.target,
+      cut_transfer: pv("cut_transfer") ?? r.cut_transfer,
+      under_budget: pv("under_budget") ?? r.under_budget,
+    })
   }
   for (const d of diff.sub_job_diffs) {
     if (d.change !== "added") continue
-    const bd = d.diffs?.find(x => x.field === "budget")
-    const td_ = d.diffs?.find(x => x.field === "target")
-    rows.push({ name: d.name, fund_type: d.fund_type, data_year: d.data_year, budget: (bd?.po_value as number) ?? null, target: (td_?.po_value as number) ?? null })
+    if (handled.has(`${d.name}|${d.fund_type}|${d.data_year}`)) continue
+    const pv = (field: NumField) => d.diffs?.find(x => x.field === field)?.po_value as number | null ?? null
+    rows.push({ name: d.name, fund_type: d.fund_type, data_year: d.data_year, budget: pv("budget"), target: pv("target"), cut_transfer: pv("cut_transfer"), under_budget: pv("under_budget") })
   }
   return rows
 }
@@ -80,6 +121,10 @@ function groupRows(rows: Row[]): { groups: Groups; allYears: number[] } {
 function fmt3(v: number | null): string {
   if (v == null) return "—"
   return v.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+}
+
+function sumOf(a: number | null, b: number | null): number | null {
+  return (a != null || b != null) ? (a ?? 0) + (b ?? 0) : null
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -128,26 +173,39 @@ export default function ImportDiffPage() {
   const otherDiffs = diff.project_diffs.filter(d => d.field !== "name")
 
   const oldRows = project ? buildOldRows(project, diff) : []
-  const newRows = project ? buildNewRows(project, diff) : []
+  const newRows = project
+    ? buildNewRows(project, diff)
+    : diff.sub_job_diffs
+        .filter(d => d.change === "added")
+        .map(d => {
+          const pv = (field: NumField) => d.diffs?.find(x => x.field === field)?.po_value as number | null ?? null
+          return { name: d.name, fund_type: d.fund_type, data_year: d.data_year, budget: pv("budget"), target: pv("target"), cut_transfer: pv("cut_transfer"), under_budget: pv("under_budget") }
+        })
   const { groups: oldGroups } = groupRows(oldRows)
   const { groups: newGroups, allYears: newYears } = groupRows(newRows)
-  // Always use all BG years as the base so every year the project has shows up
-  const bgAllYears = project ? [...new Set(project.sub_jobs.map(s => s.data_year))].sort() : []
+  const bgAllYears = project ? [...new Set([
+    ...project.sub_jobs.map(s => s.data_year),
+    ...project.budget_sources.map(s => s.data_year),
+  ])].sort() : []
   const allYears = [...new Set([...bgAllYears, ...newYears])].sort()
 
-  // Preserve BG name order, add new at the end
-  const bgNames = project ? [...new Set(project.sub_jobs.map(s => s.name))] : []
+  const noSubJobs = project ? project.sub_jobs.length === 0 : false
+  const bgNames = project
+    ? noSubJobs
+      ? (project.budget_sources.length > 0 ? [VIRTUAL_SJ] : [])
+      : [...new Set(project.sub_jobs.map(s => s.name))]
+    : []
   const addedNames = diff.sub_job_diffs.filter(d => d.change === "added" && !bgNames.includes(d.name)).map(d => d.name)
   const allNames = [...new Set([...bgNames, ...addedNames])]
 
-  // Changed cells set for highlight
   const changedCells = new Set<string>()
   for (const d of diff.sub_job_diffs) {
+    const key = `${d.name}|${d.data_year}|${d.fund_type}`
     if (d.change === "added" || d.change === "removed") {
-      changedCells.add(`${d.name}|${d.data_year}|${d.fund_type}|budget`)
-      changedCells.add(`${d.name}|${d.data_year}|${d.fund_type}|target`)
+      for (const f of ["budget", "target", "cut_transfer", "under_budget"])
+        changedCells.add(`${key}|${f}`)
     } else if (d.change === "modified") {
-      for (const fd of d.diffs ?? []) changedCells.add(`${d.name}|${d.data_year}|${d.fund_type}|${fd.field}`)
+      for (const fd of d.diffs ?? []) changedCells.add(`${key}|${fd.field}`)
     }
   }
 
@@ -161,12 +219,12 @@ export default function ImportDiffPage() {
       <thead>
         <tr>
           <th style={th({ width: 200, minWidth: 200, position: "sticky", left: 0, zIndex: 3, textAlign: "left" })} rowSpan={3}>ชื่องาน</th>
-          {allYears.map(yr => <th key={yr} colSpan={6} style={th({ background: "#F3F4F6", borderBottom: "none" })}>ปี {yr}</th>)}
+          {allYears.map(yr => <th key={yr} colSpan={COLS_PER_YEAR} style={th({ background: "#F3F4F6", borderBottom: "none" })}>ปี {yr}</th>)}
         </tr>
         <tr>
           {allYears.map(yr => (
             <Fragment key={yr}>
-              {COL_GROUPS.map(g => <th key={g.label} colSpan={3} style={th({ background: g.bg, borderBottom: "none" })}>{g.label}</th>)}
+              {COL_GROUPS.map(g => <th key={g.label} colSpan={g.cols} style={th({ background: g.bg, borderBottom: "none" })}>{g.label}</th>)}
             </Fragment>
           ))}
         </tr>
@@ -175,7 +233,10 @@ export default function ImportDiffPage() {
             <Fragment key={yr}>
               {COL_GROUPS.map(g => (
                 <Fragment key={g.label}>
-                  {["ผูกพัน", "ลงทุน", "รวม"].map(lbl => <th key={lbl} style={th({ minWidth: 110, background: g.sub })}>{lbl}</th>)}
+                  {g.cols === 3
+                    ? ["ผูกพัน", "ลงทุน", "รวม"].map(lbl => <th key={lbl} style={th({ minWidth: 110, background: g.sub })}>{lbl}</th>)
+                    : <th style={th({ minWidth: 110, background: g.sub })}>รวม</th>
+                  }
                 </Fragment>
               ))}
             </Fragment>
@@ -187,7 +248,7 @@ export default function ImportDiffPage() {
 
   // ── Table body ───────────────────────────────────────────────────────────
   function TableBody({ groups, side }: { groups: Groups; side: "old" | "new" }) {
-    const neg = (v: number) => v < 0 ? { color: "#DC2626" } : {}
+    const neg = (v: number | null) => v != null && v < 0 ? { color: "#DC2626" } : {}
 
     return (
       <tbody>
@@ -209,35 +270,60 @@ export default function ImportDiffPage() {
                 const slot = groups.get(name)?.get(yr)
                 const c = slot?.committed ?? null
                 const inv = slot?.invest ?? null
+                const chg = side === "new" ? changeOf(name, yr, "ผูกพัน") ?? changeOf(name, yr, "ลงทุน") : undefined
 
-                function numCell(row: Row | null, field: "budget" | "target", fundType: string) {
+                function numCell(row: Row | null, field: NumField, fundType: string) {
                   const changed = side === "new" && changedCells.has(`${name}|${yr}|${fundType}|${field}`)
-                  const chg = side === "new" ? changeOf(name, yr, fundType) : undefined
+                  const chgLocal = side === "new" ? changeOf(name, yr, fundType) : undefined
                   const bg = changed ? "#FEF9C3" : rowBg
-                  const color = chg === "added" ? "#16A34A" : chg === "removed" ? "#9CA3AF" : changed ? "#92400E" : "#374151"
+                  const color = chgLocal === "added" ? "#16A34A" : chgLocal === "removed" ? "#9CA3AF" : changed ? "#92400E" : "#374151"
                   const val = row?.[field] ?? null
                   return (
-                    <td key={`${name}-${yr}-${fundType}-${field}`} style={td({ textAlign: "right", fontFamily: "monospace", background: bg, color, fontWeight: changed ? 700 : undefined })}>
+                    <td key={`${name}-${yr}-${fundType}-${field}`} style={td({ textAlign: "right", fontFamily: "monospace", background: bg, color, fontWeight: changed ? 700 : undefined, ...neg(val) })}>
                       {fmt3(val)}
                     </td>
                   )
                 }
 
-                const cb = c?.budget ?? null; const ib = inv?.budget ?? null
-                const ct = c?.target ?? null; const it = inv?.target ?? null
-                const tb = (cb != null || ib != null) ? (cb ?? 0) + (ib ?? 0) : null
-                const tt = (ct != null || it != null) ? (ct ?? 0) + (it ?? 0) : null
-                const sumBgChanged = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|budget`) || changedCells.has(`${name}|${yr}|ลงทุน|budget`))
-                const sumTgChanged = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|target`) || changedCells.has(`${name}|${yr}|ลงทุน|target`))
+                function sumCell(val: number | null, changed: boolean) {
+                  return (
+                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: changed ? "#FEF9C3" : rowBg || "#F9FAFB", color: chg === "added" ? "#16A34A" : chg === "removed" ? "#9CA3AF" : changed ? "#92400E" : "#374151", fontWeight: changed ? 700 : undefined, ...neg(val) })}>
+                      {fmt3(val)}
+                    </td>
+                  )
+                }
+
+                // budget
+                const tBudget = sumOf(c?.budget ?? null, inv?.budget ?? null)
+                const sumBgCh = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|budget`) || changedCells.has(`${name}|${yr}|ลงทุน|budget`))
+                // target
+                const tTarget = sumOf(c?.target ?? null, inv?.target ?? null)
+                const sumTgCh = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|target`) || changedCells.has(`${name}|${yr}|ลงทุน|target`))
+                // remain
+                const cRemain = c != null ? (c.budget ?? 0) - (c.target ?? 0) : null
+                const iRemain = inv != null ? (inv.budget ?? 0) - (inv.target ?? 0) : null
+                const tRemain = tBudget != null || tTarget != null ? (tBudget ?? 0) - (tTarget ?? 0) : null
+                const sumRmCh = sumBgCh || sumTgCh
+                // cut_transfer
+                const tCT = sumOf(c?.cut_transfer ?? null, inv?.cut_transfer ?? null)
+                const sumCtCh = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|cut_transfer`) || changedCells.has(`${name}|${yr}|ลงทุน|cut_transfer`))
+                // under_budget
+                const tUB = sumOf(c?.under_budget ?? null, inv?.under_budget ?? null)
+                const sumUbCh = side === "new" && (changedCells.has(`${name}|${yr}|ผูกพัน|under_budget`) || changedCells.has(`${name}|${yr}|ลงทุน|under_budget`))
 
                 return (
                   <Fragment key={yr}>
                     {numCell(c, "budget", "ผูกพัน")}
                     {numCell(inv, "budget", "ลงทุน")}
-                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: sumBgChanged ? "#FEF9C3" : rowBg || "#F9FAFB", ...neg(tb ?? 0) })}>{fmt3(tb)}</td>
+                    {sumCell(tBudget, sumBgCh)}
                     {numCell(c, "target", "ผูกพัน")}
                     {numCell(inv, "target", "ลงทุน")}
-                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: sumTgChanged ? "#FEF9C3" : rowBg || "#F9FAFB", ...neg(tt ?? 0) })}>{fmt3(tt)}</td>
+                    {sumCell(tTarget, sumTgCh)}
+                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: sumRmCh ? "#FEF9C3" : rowBg || "#F9FAFB", ...neg(cRemain) })}>{fmt3(cRemain)}</td>
+                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: sumRmCh ? "#FEF9C3" : rowBg || "#F9FAFB", ...neg(iRemain) })}>{fmt3(iRemain)}</td>
+                    <td style={td({ textAlign: "right", fontFamily: "monospace", background: sumRmCh ? "#FEF9C3" : rowBg || "#F9FAFB", ...neg(tRemain) })}>{fmt3(tRemain)}</td>
+                    {sumCell(tCT, sumCtCh)}
+                    {sumCell(tUB, sumUbCh)}
                   </Fragment>
                 )
               })}
@@ -312,7 +398,6 @@ export default function ImportDiffPage() {
             </div>
           </div>
 
-          {/* OLD — BG */}
           <p className="text-xs font-medium text-gray-400 mb-1">ข้อมูลเดิม (BG)</p>
           <div ref={oldRef} onScroll={onOldScroll} className="overflow-x-auto rounded-lg border border-gray-200 mb-3">
             <table style={{ borderCollapse: "collapse", minWidth: "100%" }}>
@@ -321,7 +406,6 @@ export default function ImportDiffPage() {
             </table>
           </div>
 
-          {/* NEW — PO */}
           <p className="text-xs font-medium text-blue-500 mb-1">ข้อมูลใหม่ (PO)</p>
           <div ref={newRef} onScroll={onNewScroll} className="overflow-x-auto rounded-lg border border-blue-200">
             <table style={{ borderCollapse: "collapse", minWidth: "100%" }}>

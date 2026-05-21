@@ -531,6 +531,27 @@ type Props = {
   extraColumn?: { header: React.ReactNode; cell: (project: FlatProject) => React.ReactNode }
   onFilteredDataChange?: (data: FlatProject[]) => void
 }
+function FilterInput({ value, placeholder, style, onCommit }: {
+  value: string
+  placeholder: string
+  style: React.CSSProperties
+  onCommit: (v: string) => void
+}) {
+  const [local, setLocal] = useState(value)
+  useEffect(() => { setLocal(value) }, [value])
+  return (
+    <input
+      style={style}
+      inputMode="decimal"
+      placeholder={placeholder}
+      value={local}
+      onChange={e => setLocal(e.target.value)}
+      onBlur={() => onCommit(local)}
+      onKeyDown={e => { if (e.key === "Enter") onCommit(local) }}
+    />
+  )
+}
+
 export type BudgetTableHandle = { exportCurrentView: (label: string) => Promise<void> }
 
 const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ data, years, extraColumn, onFilteredDataChange }, ref) {
@@ -543,7 +564,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const [selYears, setSelYears] = useState<Set<string>>(new Set())
   const [selDisplayYears, setSelDisplayYears] = useState<Set<string>>(new Set())
   const [numFilters, setNumFilters] = useState<Record<string, NumericFilter>>({})
-  const [sortState, setSortState] = useState<SortState>(null)
+  const [sortState, setSortState] = useState<SortState>({ kind: "item", dir: "asc" })
   const [showJobs, setShowJobs] = useState(true)
   const [showSources, setShowSources] = useState(true)
   const [infoVis, setInfoVis] = useState({
@@ -690,11 +711,29 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const sorted = useMemo(() => {
     if (!sortState) return filtered
     if (sortState.kind === "item") {
-      return [...filtered].sort((a, b) =>
-        sortState.dir === "asc"
+      const typeOrder = (t: string) => t === "Y" ? 0 : t === "C" ? 1 : t === "L" ? 2 : 3
+      const GROUP_ORDER = [
+        "หมวดสิ่งก่อสร้าง",
+        "หมวดเครื่องจักรอุปกรณ์",
+        "หมวดเครื่องใช้สำนักงานและเครื่องมือเครื่องใช้ขนาดเล็ก",
+        "หมวดวิจัยและพัฒนา",
+        "หมวดลงทุนอื่นๆ",
+        "หมวดสำรองกรณีจำเป็นเร่งด่วน",
+        "หมวดสำรองราคา",
+      ]
+      const groupOrder = (g: string | null) => {
+        const i = GROUP_ORDER.indexOf(g ?? "")
+        return i === -1 ? GROUP_ORDER.length : i
+      }
+      return [...filtered].sort((a, b) => {
+        const tDiff = typeOrder(a.project_type) - typeOrder(b.project_type)
+        if (tDiff !== 0) return tDiff
+        const gDiff = groupOrder(a.group_name) - groupOrder(b.group_name)
+        if (gDiff !== 0) return gDiff
+        return sortState.dir === "asc"
           ? itemNoCompare(a.item_no, b.item_no)
-          : itemNoCompare(b.item_no, a.item_no),
-      )
+          : itemNoCompare(b.item_no, a.item_no)
+      })
     }
     if (sortState.kind === "year") {
       return [...filtered].sort((a, b) =>
@@ -1423,35 +1462,17 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                                   width: 112,
                                 }}
                               >
-                                <input
+                                <FilterInput
                                   style={filterInput}
-                                  inputMode="decimal"
                                   placeholder="min"
                                   value={current.min}
-                                  onChange={(e) =>
-                                    updateNumFilter(
-                                      year,
-                                      group.key,
-                                      column.key,
-                                      "min",
-                                      e.target.value,
-                                    )
-                                  }
+                                  onCommit={(v) => updateNumFilter(year, group.key, column.key, "min", v)}
                                 />
-                                <input
+                                <FilterInput
                                   style={filterInput}
-                                  inputMode="decimal"
                                   placeholder="max"
                                   value={current.max}
-                                  onChange={(e) =>
-                                    updateNumFilter(
-                                      year,
-                                      group.key,
-                                      column.key,
-                                      "max",
-                                      e.target.value,
-                                    )
-                                  }
+                                  onCommit={(v) => updateNumFilter(year, group.key, column.key, "max", v)}
                                 />
                               </div>
                               </th>

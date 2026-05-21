@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting } from "./types"
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
 
@@ -200,4 +200,13 @@ export const api = {
   importDiff: (code: string) => get<ProjectDiff>(`/import/project/${code}/diff`),
   importAccept: (code: string) => post<{ ok: boolean; project_code: string; po_version: number }>(`/import/project/${code}/accept`, {}),
   importLog: () => get<ImportLog[]>("/import/log"),
+
+  // Project overview
+  projectOverview: (year?: number) =>
+    get<ProjectOverviewItem[]>("/project-overview", year ? { year: String(year) } : undefined),
+
+  // Settings
+  getActiveYear: () => get<ActiveYearSetting>("/settings/active-year"),
+  setActiveYear: (year: number) =>
+    putJson<ActiveYearSetting>("/settings/active-year", { active_year: year }),
 }
