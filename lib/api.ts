@@ -1,11 +1,15 @@
 import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting } from "./types"
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080/api/v1"
+const BASE = "/api/v1"
+const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
-  const url = new URL(BASE + path)
-  if (params) Object.entries(params).forEach(([k, v]) => v && url.searchParams.set(k, v))
-  const res = await fetch(url.toString(), { cache: "no-store" })
+  let url = BASE + path
+  if (params) {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => Boolean(v)) as [string, string][])
+    if (qs.toString()) url += "?" + qs.toString()
+  }
+  const res = await fetch(url, { cache: "no-store", headers: EXTRA_HEADERS })
   if (!res.ok) throw new Error(`API error ${res.status}`)
   return res.json()
 }
@@ -15,7 +19,7 @@ import type { ProjectTag, TagCategory, TagValue, SubJobTag, TagSummaryRow, SubJo
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...EXTRA_HEADERS },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -26,7 +30,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 async function put(path: string, body: unknown): Promise<void> {
   const res = await fetch(BASE + path, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...EXTRA_HEADERS },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -35,7 +39,7 @@ async function put(path: string, body: unknown): Promise<void> {
 async function putJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...EXTRA_HEADERS },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -45,7 +49,7 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
 async function patchJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...EXTRA_HEADERS },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(await res.text())
@@ -53,7 +57,7 @@ async function patchJson<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function del(path: string): Promise<void> {
-  const res = await fetch(BASE + path, { method: "DELETE" })
+  const res = await fetch(BASE + path, { method: "DELETE", headers: EXTRA_HEADERS })
   if (!res.ok) throw new Error(await res.text())
 }
 
@@ -186,7 +190,7 @@ export const api = {
   updateBatchComment: (batchId: string, comment: string) =>
     fetch(`${BASE}/change-log/batch/${encodeURIComponent(batchId)}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...EXTRA_HEADERS },
       body: JSON.stringify({ comment }),
     }).then(r => { if (!r.ok) throw new Error(r.statusText) }),
 
