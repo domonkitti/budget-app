@@ -160,7 +160,7 @@ export default function Navbar() {
 
   return (
     <>
-      <nav className="bg-white border-b px-6 h-12 flex items-center gap-1 sticky top-0 z-30">
+      <nav className="no-print bg-white border-b px-6 h-12 flex items-center gap-1 sticky top-0 z-30">
         <span className="font-bold text-gray-800 text-sm mr-4">Budget App</span>
 
         {navLinks.map((l) => {

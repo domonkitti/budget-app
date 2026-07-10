@@ -10,7 +10,7 @@ const FUND_COLUMNS = [
   { key: "total", label: "รวม", fundType: null },
 ] as const
 const GROUPS = [
-  { key: "Budget", label: "งบเงินดำเนินการปี" },
+  { key: "Budget", label: "วงเงินดำเนินการปี" },
   { key: "Target", label: "เป้าหมายการเบิกจ่ายปี" },
   { key: "Remain", label: "คงเหลือ" },
   { key: "CutTransfer", label: "ตัดทิ้ง" },
@@ -640,6 +640,12 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     () => FUND_COLUMNS.filter((column) => fundVis[column.key]),
     [fundVis],
   )
+  function getEffectiveFunds(group: Group) {
+    if (group === "CutTransfer" || group === "UnderBudget") {
+      return FUND_COLUMNS.filter((c) => c.key === "total")
+    }
+    return visibleFunds
+  }
   const leftColSpan =
     2 +
     Number(Boolean(extraColumn)) +
@@ -649,7 +655,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     Number(infoVis.group) +
     Number(infoVis.type) +
     Number(infoVis.year)
-  const hasMoneyColumns = visibleGroups.length > 0 && visibleFunds.length > 0
+  const hasMoneyColumns = visibleGroups.length > 0 && visibleGroups.some((g) => getEffectiveFunds(g.key).length > 0)
 
   const sources = useMemo(() => {
     const set = new Set<string>()
@@ -672,7 +678,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const filtered = useMemo(() => {
     const numericColumns = displayYears.flatMap((year) =>
       visibleGroups.flatMap((group) =>
-        visibleFunds.map((column) => ({
+        getEffectiveFunds(group.key).map((column) => ({
           year,
           group: group.key,
           fundType: column.fundType,
@@ -711,7 +717,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const sorted = useMemo(() => {
     if (!sortState) return filtered
     if (sortState.kind === "item") {
-      const typeOrder = (t: string) => t === "Y" ? 0 : t === "C" ? 1 : t === "L" ? 2 : 3
+      const typeOrder = (t: string) => t === "Y" ? 0 : t === "CY" ? 1 : t === "C" ? 2 : t === "CC" ? 3 : t === "L" ? 4 : 5
       const GROUP_ORDER = [
         "หมวดสิ่งก่อสร้าง",
         "หมวดเครื่องจักรอุปกรณ์",
@@ -742,7 +748,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     }
     const groupVisible = groupVis[sortState.group]
     const fundColumn = FUND_COLUMNS.find((column) => column.key === sortState.fundKey)
-    if (!groupVisible || !fundColumn || !fundVis[sortState.fundKey]) return filtered
+    const effectiveFundsForSort = getEffectiveFunds(sortState.group)
+    if (!groupVisible || !fundColumn || !effectiveFundsForSort.some((c) => c.key === sortState.fundKey)) return filtered
     return [...filtered].sort((a, b) => {
       const av = getVal(
         a.source_breakdown,
@@ -798,9 +805,9 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
         items.push({ kind: "type-total", label: "รวมงานรายปี (Y)", projects: seg.rows, bg: "#DBEAFE", color: "#1E3A8A" })
       } else {
         for (const row of seg.rows) items.push({ kind: "project", row })
-        const label = seg.type === "C" ? "รวมแผนระยะยาว (C)" : seg.type === "L" ? "รวมสัญญาเช่า (L)" : `รวม${seg.type}`
-        const bg = seg.type === "C" ? "#D1FAE5" : "#FDE68A"
-        const color = seg.type === "C" ? "#065F46" : "#92400E"
+        const label = seg.type === "CY" ? "รวมเปลี่ยนแปลงงบรายปี (CY)" : seg.type === "C" ? "รวมแผนระยะยาว (C)" : seg.type === "CC" ? "รวมเปลี่ยนแปลงแผนงาน (CC)" : seg.type === "L" ? "รวมสัญญาเช่า (L)" : `รวม${seg.type}`
+        const bg = seg.type === "CY" ? "#CFFAFE" : seg.type === "C" ? "#D1FAE5" : seg.type === "CC" ? "#FFE4E6" : "#FDE68A"
+        const color = seg.type === "CY" ? "#164E63" : seg.type === "C" ? "#065F46" : seg.type === "CC" ? "#9F1239" : "#92400E"
         items.push({ kind: "type-total", label, projects: seg.rows, bg, color })
       }
     }
@@ -903,7 +910,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     const moneyHeaders = hasMoneyColumns
       ? displayYears.flatMap((year) =>
           visibleGroups.flatMap((group) =>
-            visibleFunds.map((column) =>
+            getEffectiveFunds(group.key).map((column) =>
               group.key === "Remain"
                 ? `${group.label} ${column.label}`
                 : `${group.label} ${year} ${column.label}`,
@@ -935,7 +942,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
       if (!hasMoneyColumns) return []
       return displayYears.flatMap((year) =>
         visibleGroups.flatMap((group) =>
-          visibleFunds.map((column) =>
+          getEffectiveFunds(group.key).map((column) =>
             excelMoney(getVal(row.source_breakdown, year, null, column.fundType, group.key)),
           ),
         ),
@@ -950,7 +957,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           const values = hasMoneyColumns
             ? displayYears.flatMap((year) =>
                 visibleGroups.flatMap((group) =>
-                  visibleFunds.map((column) =>
+                  getEffectiveFunds(group.key).map((column) =>
                     excelMoney(getSubJobVal(row.sub_jobs ?? [], subJob.name, year, column.fundType, group.key)),
                   ),
                 ),
@@ -965,7 +972,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           const values = hasMoneyColumns
             ? displayYears.flatMap((year) =>
                 visibleGroups.flatMap((group) =>
-                  visibleFunds.map((column) =>
+                  getEffectiveFunds(group.key).map((column) =>
                     excelMoney(getVal(row.source_breakdown, year, source, column.fundType, group.key)),
                   ),
                 ),
@@ -1061,7 +1068,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     if (!hasMoneyColumns) return true
     return displayYears.some(year =>
       visibleGroups.some(group =>
-        visibleFunds.some(col =>
+        getEffectiveFunds(group.key).some(col =>
           getVal(breakdown, year, source, col.fundType, group.key) !== 0
         )
       )
@@ -1072,7 +1079,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
     if (!hasMoneyColumns) return true
     return displayYears.some(year =>
       visibleGroups.some(group =>
-        visibleFunds.some(col =>
+        getEffectiveFunds(group.key).some(col =>
           sumProjectsBySource(projects, year, source, col.fundType, group.key) !== 0
         )
       )
@@ -1117,7 +1124,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
             <Fragment key={year}>
               {visibleGroups.map((group) => (
                 <Fragment key={`${key}-${year}-${group.key}`}>
-                  {visibleFunds.map((column) => {
+                  {getEffectiveFunds(group.key).map((column) => {
                     const val = sumProjects(projects, year, column.fundType, group.key)
                     return <td key={column.key} style={cellStyle}>{fmt(val)}</td>
                   })}
@@ -1143,7 +1150,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
               <Fragment key={year}>
                 {visibleGroups.map((group) => (
                   <Fragment key={`${key}-src-${source}-${year}-${group.key}`}>
-                    {visibleFunds.map((column) => {
+                    {getEffectiveFunds(group.key).map((column) => {
                       const val = sumProjectsBySource(projects, year, source, column.fundType, group.key)
                       return <td key={column.key} style={srcCellStyle}>{fmt(val)}</td>
                     })}
@@ -1208,20 +1215,23 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
         </DropdownMenu>
 
         <DropdownMenu label="Columns">
-          {FUND_COLUMNS.map((col) => (
-            <DropdownItem
-              key={col.key}
-              checked={fundVis[col.key]}
-              onChange={(v) => setFundVis((s) => ({ ...s, [col.key]: v }))}
-              label={col.label}
-            />
-          ))}
           {GROUPS.map((group) => (
             <DropdownItem
               key={group.key}
               checked={groupVis[group.key]}
               onChange={(v) => setGroupVis((s) => ({ ...s, [group.key]: v }))}
               label={group.label}
+            />
+          ))}
+        </DropdownMenu>
+
+        <DropdownMenu label="Detail">
+          {FUND_COLUMNS.map((col) => (
+            <DropdownItem
+              key={col.key}
+              checked={fundVis[col.key]}
+              onChange={(v) => setFundVis((s) => ({ ...s, [col.key]: v }))}
+              label={col.label}
             />
           ))}
         </DropdownMenu>
@@ -1265,7 +1275,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                 displayYears.map((year) => (
                   <th
                     key={year}
-                    colSpan={visibleGroups.length * visibleFunds.length}
+                    colSpan={visibleGroups.reduce((s, g) => s + getEffectiveFunds(g.key).length, 0)}
                     style={{ ...thBase, top: 0, zIndex: 4 }}
                   >
                     {year}
@@ -1281,7 +1291,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                     {visibleGroups.map((group) => (
                       <th
                         key={`${year}-${group.key}`}
-                        colSpan={visibleFunds.length}
+                        colSpan={getEffectiveFunds(group.key).length}
                         style={{ ...thBase, top: row2Top, zIndex: 4 }}
                       >
                         {group.label}
@@ -1359,7 +1369,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                   <Fragment key={year}>
                     {visibleGroups.map((group) => (
                       <Fragment key={`${year}-${group.key}-funds`}>
-                        {visibleFunds.map((column) => (
+                        {getEffectiveFunds(group.key).map((column) => (
                           <th
                             key={`${year}-${group.key}-${column.key}`}
                             style={{ ...thBase, top: row3Top, zIndex: 4 }}
@@ -1443,7 +1453,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                     {visibleGroups.map((group) => {
                       return (
                         <Fragment key={`${year}-${group.key}-filters`}>
-                          {visibleFunds.map((column) => {
+                          {getEffectiveFunds(group.key).map((column) => {
                             const current =
                               numFilters[filterKey(year, group.key, column.key)] ?? {
                                 min: "",
@@ -1594,7 +1604,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         <Fragment key={year}>
                           {visibleGroups.map((group) => (
                             <Fragment key={`${row.project_code}-${year}-${group.key}`}>
-                              {visibleFunds.map((column) => {
+                              {getEffectiveFunds(group.key).map((column) => {
                                 const val = getVal(
                                   row.source_breakdown,
                                   year,
@@ -1657,7 +1667,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                                 <Fragment
                                   key={`${row.project_code}-${subJob.name}-${year}-${group.key}`}
                                 >
-                                  {visibleFunds.map((column) => {
+                                  {getEffectiveFunds(group.key).map((column) => {
                                     const val = getSubJobVal(
                                       row.sub_jobs ?? [],
                                       subJob.name,
@@ -1722,7 +1732,7 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                                 <Fragment
                                   key={`${row.project_code}-${source}-${year}-${group.key}`}
                                 >
-                                  {visibleFunds.map((column) => {
+                                  {getEffectiveFunds(group.key).map((column) => {
                                     const val = getVal(
                                       row.source_breakdown,
                                       year,

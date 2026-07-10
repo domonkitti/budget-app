@@ -10,15 +10,19 @@ function fmt(n: number) {
 }
 
 const TYPE_LABELS: Record<string, string> = {
-  Y: "งานรายปี",
-  C: "แผนระยะยาว",
-  L: "สัญญาเช่า",
+  Y:  "งานรายปี",
+  CY: "เปลี่ยนแปลงงบรายปี",
+  C:  "แผนระยะยาว",
+  CC: "เปลี่ยนแปลงแผนงาน",
+  L:  "สัญญาเช่า",
 }
 
 const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  Y: { bg: "#DBEAFE", text: "#1E3A8A" },
-  C: { bg: "#D1FAE5", text: "#065F46" },
-  L: { bg: "#FDE68A", text: "#92400E" },
+  Y:  { bg: "#DBEAFE", text: "#1E3A8A" },
+  CY: { bg: "#CFFAFE", text: "#164E63" },
+  C:  { bg: "#D1FAE5", text: "#065F46" },
+  CC: { bg: "#FFE4E6", text: "#9F1239" },
+  L:  { bg: "#FDE68A", text: "#92400E" },
 }
 
 type FundVals = { committed: number; invest: number }
@@ -58,7 +62,7 @@ export default function SummaryCharts({ data, years = [] }: Props) {
 
   const typeAggs = useMemo((): TypeAgg[] => {
     if (displayYear === null) return []
-    return ["Y", "C", "L"]
+    return ["Y", "CY", "C", "CC", "L"]
       .map(type => {
         const sourceMap: Record<string, { budget: FundVals; target: FundVals }> = {}
         data
@@ -128,7 +132,7 @@ export default function SummaryCharts({ data, years = [] }: Props) {
             <thead>
               <tr className="border-b text-gray-500">
                 <th className="text-left py-1 px-2 font-medium text-xs" rowSpan={2}>ประเภท / แหล่งเงิน</th>
-                <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>งบเงินดำเนินการปี</th>
+                <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>วงเงินดำเนินการปี</th>
                 <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>เป้าหมายการเบิกจ่าย</th>
               </tr>
               <tr className="border-b text-gray-400">
@@ -203,7 +207,7 @@ export default function SummaryCharts({ data, years = [] }: Props) {
             <YAxis tickFormatter={v => Number(v).toFixed(0)} tick={{ fontSize: 10 }} />
             <Tooltip formatter={(v) => `${Number(v).toFixed(1)}M`} />
             <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
-            <Bar dataKey="budget" fill="#3b82f6" name="งบเงินดำเนินการ/รวม" radius={[3, 3, 0, 0]}>
+            <Bar dataKey="budget" fill="#3b82f6" name="วงเงินดำเนินการ/รวม" radius={[3, 3, 0, 0]}>
               <LabelList dataKey="budget" position="top" formatter={(v) => Math.round(Number(v)).toLocaleString()} style={{ fontSize: 12, fontWeight: 600, fill: "#3b82f6" }} />
             </Bar>
             <Bar dataKey="target" fill="#10b981" name="เป้าหมายการเบิกจ่าย/รวม" radius={[3, 3, 0, 0]}>

@@ -17,7 +17,7 @@ const td = (extra?: React.CSSProperties): React.CSSProperties => ({
 })
 
 const COL_GROUPS = [
-  { label: "งบเงินดำเนินการ",     field: "budget"       as const, cols: 3, bg: "rgba(96,165,250,0.15)",  sub: "rgba(96,165,250,0.08)"  },
+  { label: "วงเงินดำเนินการ",     field: "budget"       as const, cols: 3, bg: "rgba(96,165,250,0.15)",  sub: "rgba(96,165,250,0.08)"  },
   { label: "เป้าหมายการเบิกจ่าย", field: "target"       as const, cols: 3, bg: "rgba(52,211,153,0.15)",  sub: "rgba(52,211,153,0.08)"  },
   { label: "คงเหลือ",              field: "remain"       as const, cols: 3, bg: "rgba(156,163,175,0.15)", sub: "rgba(156,163,175,0.08)" },
   { label: "ตัดทิ้ง",             field: "cut_transfer" as const, cols: 1, bg: "rgba(251,146,60,0.15)",  sub: "rgba(251,146,60,0.08)"  },

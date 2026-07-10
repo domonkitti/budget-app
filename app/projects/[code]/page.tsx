@@ -116,6 +116,22 @@ function EditableCell({
 }
 
 
+// ─── Toggle switch ────────────────────────────────────────────────────────────
+
+function ToggleSwitch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none" }}>
+      <div
+        onClick={() => onChange(!on)}
+        style={{ width: 32, height: 18, borderRadius: 9, position: "relative", background: on ? "#3B82F6" : "#D1D5DB", transition: "background 0.2s", flexShrink: 0 }}
+      >
+        <div style={{ position: "absolute", top: 2, left: on ? 16 : 2, width: 14, height: 14, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 2px rgba(0,0,0,0.2)" }} />
+      </div>
+      <span style={{ fontSize: 12, color: "#6B7280" }}>{label}</span>
+    </label>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function ProjectPage() {
@@ -163,6 +179,14 @@ function ProjectEditor({ code }: { code: string }) {
   const [deletedSjNames, setDeletedSjNames] = useState<Set<string>>(new Set())
   const [sjMgmtOpen, setSjMgmtOpen] = useState(false)
   const [sjNameInput, setSjNameInput] = useState("")
+
+  // Budget source row visibility
+  const [showAllSources, setShowAllSources] = useState(false)
+
+  // Year range toggle
+  const [showAllYears, setShowAllYears] = useState(false)
+  const [yearRangeStart, setYearRangeStart] = useState(0)
+  const [yearRangeEnd, setYearRangeEnd] = useState(0)
 
   // Info editing
   const [editingInfo, setEditingInfo] = useState(false)
@@ -235,12 +259,13 @@ function ProjectEditor({ code }: { code: string }) {
     try { setHistory(await api.projectHistory(code)) } catch {}
   }, [code, isScenario])
 
-  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); load() }, [load])
+  useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); setYearRangeStart(0); setYearRangeEnd(0); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
+  useEffect(() => { if (project && yearRangeStart === 0) { setYearRangeStart(project.year); setYearRangeEnd(project.year) } }, [project, yearRangeStart])
 
 
   function historyFieldLabel(field: string) {
-    if (field === "budget") return "งบเงินดำเนินการ"
+    if (field === "budget") return "วงเงินดำเนินการ"
     if (field === "target") return "เป้าหมายการเบิกจ่าย"
     if (field === "cut_transfer") return "ตัดทิ้ง/โยกย้าย"
     if (field === "under_budget") return "ต่ำกว่างบ"
@@ -830,12 +855,22 @@ function ProjectEditor({ code }: { code: string }) {
   const subJobGroups = project ? groupSubJobs(project.sub_jobs ?? []) : []
   const sourceGroups = project ? groupSources(project.budget_sources ?? []) : []
 
+  const ALL_BS_SOURCES = ["เงินกู้", "เงินรายได้ กฟภ.", "เงินสมทบผู้ใช้ไฟ"]
+  const existingSourceNames = new Set(sourceGroups.map(g => g.source))
+  const emptySources = showAllSources ? ALL_BS_SOURCES.filter(s => !existingSourceNames.has(s)) : []
+
   // All years across both tables + any carry-forward years in pendingNew, sorted
-  const allYears = project ? [...new Set([
+  const dataYears = project ? [...new Set([
     ...project.sub_jobs.map(sj => sj.data_year),
     ...project.budget_sources.map(bs => bs.data_year),
     ...[...pendingNew.keys()].map(k => parseInt(k.split("|")[2])).filter(y => !isNaN(y)),
   ])].sort() : []
+
+  const rangeYears = (showAllYears && yearRangeStart > 0 && yearRangeEnd >= yearRangeStart)
+    ? Array.from({ length: yearRangeEnd - yearRangeStart + 1 }, (_, i) => yearRangeStart + i)
+    : []
+
+  const allYears = [...new Set([...dataYears, ...rangeYears])].sort()
 
   const activeSjGroups = subJobGroups.filter(g => !deletedSjNames.has(g.name))
   const hasVirtualSjRow = activeSjGroups.length === 0 && newSjNames.length === 0 && allYears.length > 0
@@ -901,6 +936,14 @@ function ProjectEditor({ code }: { code: string }) {
           const np = pendingNew.get(`bs-new|${g.source}|${y.year}|ลงทุน`)
           if (np) { add(bs, `ลงทุน|${y.year}|budget`, np.budget); add(bs, `ลงทุน|${y.year}|target`, np.target) }
         }
+      }
+    }
+    for (const source of emptySources) {
+      for (const year of allYears) {
+        const pnc = pendingNew.get(`bs-new|${source}|${year}|ผูกพัน`)
+        const pni = pendingNew.get(`bs-new|${source}|${year}|ลงทุน`)
+        if (pnc) { add(bs, `ผูกพัน|${year}|budget`, pnc.budget); add(bs, `ผูกพัน|${year}|target`, pnc.target) }
+        if (pni) { add(bs, `ลงทุน|${year}|budget`, pni.budget); add(bs, `ลงทุน|${year}|target`, pni.target) }
       }
     }
 
@@ -995,6 +1038,14 @@ function ProjectEditor({ code }: { code: string }) {
         if (pni) { total_ct += pni.cut_transfer; total_ub += pni.under_budget }
       }
     }
+    for (const source of emptySources) {
+      const pnc = pendingNew.get(`bs-new|${source}|${year}|ผูกพัน`)
+      const pni = pendingNew.get(`bs-new|${source}|${year}|ลงทุน`)
+      sc_b += pnc?.budget ?? 0; sc_t += pnc?.target ?? 0
+      si_b += pni?.budget ?? 0; si_t += pni?.target ?? 0
+      const adjPn = pnc ?? pni
+      if (adjPn) { total_ct += adjPn.cut_transfer; total_ub += adjPn.under_budget }
+    }
     return { sc_b, si_b, sc_t, si_t, total_ct, total_ub }
   }
 
@@ -1055,7 +1106,7 @@ function ProjectEditor({ code }: { code: string }) {
 
   // Table header — 9 cols (3 groups × 3) + 2 single cols = 11 per year
   const COL_GROUPS = [
-    { label: "งบเงินดำเนินการ",    field: "budget" as const,       cols: 3 as const, bg: "rgba(96,165,250,0.15)", subBg: "rgba(96,165,250,0.08)" },
+    { label: "วงเงินดำเนินการ",    field: "budget" as const,       cols: 3 as const, bg: "rgba(96,165,250,0.15)", subBg: "rgba(96,165,250,0.08)" },
     { label: "เป้าหมายการเบิกจ่าย", field: "target" as const,      cols: 3 as const, bg: "rgba(52,211,153,0.15)", subBg: "rgba(52,211,153,0.08)" },
     { label: "คงเหลือ",             field: null,                    cols: 3 as const, bg: "rgba(251,191,36,0.15)", subBg: "rgba(251,191,36,0.08)" },
     { label: "ตัดทิ้ง/โยกย้าย",   field: "cut_transfer" as const, cols: 1 as const, bg: "rgba(239,68,68,0.12)",  subBg: "rgba(239,68,68,0.06)" },
@@ -1311,7 +1362,9 @@ function ProjectEditor({ code }: { code: string }) {
                     <select value={infoForm.project_type} onChange={e => setInfoForm(f => ({ ...f, project_type: e.target.value }))}
                       style={{ fontSize: 13, border: "1.5px solid #D1D5DB", borderRadius: 6, padding: "4px 8px", outline: "none" }}>
                       <option value="Y">Y — รายปี</option>
+                      <option value="CY">CY — เปลี่ยนแปลงงบรายปี</option>
                       <option value="C">C — แผนงานระยะยาว</option>
+                      <option value="CC">CC — เปลี่ยนแปลงแผนงาน</option>
                       <option value="L">L — สัญญาเช่า</option>
                     </select>
                   </label>
@@ -1383,7 +1436,7 @@ function ProjectEditor({ code }: { code: string }) {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
             {sumMismatches.map((m) => {
-              const colName = (m.field === "budget" ? "งบเงินดำเนินการ" : "เป้าหมายการเบิกจ่าย") + "/" + m.fund_type
+              const colName = (m.field === "budget" ? "วงเงินดำเนินการ" : "เป้าหมายการเบิกจ่าย") + "/" + m.fund_type
               return (
                 <span
                   key={`${m.data_year}|${m.fund_type}|${m.field}`}
@@ -1409,7 +1462,27 @@ function ProjectEditor({ code }: { code: string }) {
           <>
             {/* Sub Jobs */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">งานย่อย (Sub Jobs)</h2>
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">งานย่อย (Sub Jobs)</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                <ToggleSwitch on={showAllYears} onChange={setShowAllYears} label="แสดงช่วงปี" />
+                {showAllYears && (
+                  <>
+                    <input
+                      type="number"
+                      value={yearRangeStart}
+                      onChange={e => setYearRangeStart(Number(e.target.value))}
+                      style={{ width: 80, fontSize: 12, border: "1px solid #D1D5DB", borderRadius: 5, padding: "2px 6px", outline: "none" }}
+                    />
+                    <span style={{ fontSize: 12, color: "#9CA3AF" }}>—</span>
+                    <input
+                      type="number"
+                      value={yearRangeEnd}
+                      onChange={e => setYearRangeEnd(Number(e.target.value))}
+                      style={{ width: 80, fontSize: 12, border: "1px solid #D1D5DB", borderRadius: 5, padding: "2px 6px", outline: "none" }}
+                    />
+                  </>
+                )}
+              </div>
               <div className="bg-white border rounded-xl overflow-hidden">
                 <div ref={sjScrollRef} style={{ overflowX: "auto" }} data-scroll-container="" onScroll={onSjScroll}>
                   <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse" }}>
@@ -1537,15 +1610,19 @@ function ProjectEditor({ code }: { code: string }) {
 
             {/* Budget Sources */}
             <section>
-              <h2 className="text-sm font-semibold text-gray-700 mb-2">แหล่งเงิน (Budget Sources)</h2>
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">แหล่งเงิน (Budget Sources)</h2>
+              <div style={{ marginBottom: 8 }}>
+                <ToggleSwitch on={showAllSources} onChange={setShowAllSources} label="แสดงแถวที่ไม่มีข้อมูล" />
+              </div>
               <div className="bg-white border rounded-xl overflow-hidden">
                 <div ref={bsScrollRef} style={{ overflowX: "auto" }} data-scroll-container="" onScroll={onBsScroll}>
                   <table style={{ width: "100%", minWidth: "max-content", borderCollapse: "collapse" }}>
                     {makeTableHeader()}
                     <tbody>
-                      {sourceGroups.length === 0 && <tr><td colSpan={1 + allYears.length * COLS_PER_YEAR} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
+                      {sourceGroups.length === 0 && emptySources.length === 0 && <tr><td colSpan={1 + allYears.length * COLS_PER_YEAR} style={{ ...td(), textAlign: "center", color: "#9CA3AF", padding: "24px" }}>ไม่มีข้อมูล</td></tr>}
                       {sourceGroups.map((g) => renderGroupRow(g.source, null, g.years, "bs"))}
-                      {sourceGroups.length > 0 && renderTotalsRow(bsYearTotal, false)}
+                      {emptySources.map((source) => renderGroupRow(source, null, [], "bs"))}
+                      {(sourceGroups.length > 0 || emptySources.length > 0) && renderTotalsRow(bsYearTotal, false)}
                     </tbody>
                   </table>
                 </div>

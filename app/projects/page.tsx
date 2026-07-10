@@ -1,9 +1,10 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { api } from "@/lib/api"
-import type { ProjectOverviewItem } from "@/lib/types"
+import type { FilterOptions, ProjectOverviewItem } from "@/lib/types"
 
 const statusConfig: Record<ProjectOverviewItem["status"], { label: string; className: string }> = {
   has_update:  { label: "มีการอัปเดต", className: "bg-yellow-100 text-yellow-800" },
@@ -16,11 +17,13 @@ function fmt(n: number) {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 }
 
-type GroupKey = "continuing" | "new_plan" | "annual" | "lease"
+type GroupKey = "continuing" | "new_plan" | "annual" | "lease" | "change_annual" | "change_plan"
 
 function getGroup(item: ProjectOverviewItem, activeYear: number): GroupKey {
   if (item.project_type === "L") return "lease"
   if (item.project_type === "Y") return "annual"
+  if (item.project_type === "CY") return "change_annual"
+  if (item.project_type === "CC") return "change_plan"
   if (item.project_type === "C") {
     return item.project_year < activeYear ? "continuing" : "new_plan"
   }
@@ -28,15 +31,17 @@ function getGroup(item: ProjectOverviewItem, activeYear: number): GroupKey {
 }
 
 const groupConfig: Record<GroupKey, { label: string; color: string }> = {
-  continuing: { label: "แผนงานต่อเนื่อง",               color: "border-orange-300 bg-orange-50" },
-  new_plan:   { label: "แผนงานใหม่",                    color: "border-green-300 bg-green-50" },
-  annual:     { label: "งานรายปี",                      color: "border-blue-300 bg-blue-50" },
-  lease:      { label: "แผนเช่าที่ไม่ก่อให้เกิดรายได้", color: "border-purple-300 bg-purple-50" },
+  continuing:    { label: "แผนงานต่อเนื่อง",               color: "border-orange-300 bg-orange-50" },
+  new_plan:      { label: "แผนงานใหม่",                    color: "border-green-300 bg-green-50" },
+  annual:        { label: "งานรายปี",                      color: "border-blue-300 bg-blue-50" },
+  lease:         { label: "แผนเช่าที่ไม่ก่อให้เกิดรายได้", color: "border-purple-300 bg-purple-50" },
+  change_annual: { label: "เปลี่ยนแปลงงบรายปี",            color: "border-cyan-300 bg-cyan-50" },
+  change_plan:   { label: "เปลี่ยนแปลงแผนงาน",             color: "border-rose-300 bg-rose-50" },
 }
 
-const groupOrder: GroupKey[] = ["continuing", "new_plan", "annual", "lease"]
+const groupOrder: GroupKey[] = ["continuing", "new_plan", "annual", "lease", "change_annual", "change_plan"]
 
-const TYPE_ORDER: Record<string, number> = { Y: 0, C: 1, L: 2 }
+const TYPE_ORDER: Record<string, number> = { Y: 0, CY: 1, C: 2, CC: 3, L: 4 }
 const HMWAT_ORDER = [
   "หมวดสิ่งก่อสร้าง",
   "หมวดเครื่องจักรอุปกรณ์",
@@ -83,13 +88,159 @@ interface GroupTotals {
   count: number
 }
 
+const HMWAT_OPTIONS = [
+  "หมวดสิ่งก่อสร้าง",
+  "หมวดเครื่องจักรอุปกรณ์",
+  "หมวดเครื่องใช้สำนักงานและเครื่องมือเครื่องใช้ขนาดเล็ก",
+  "หมวดวิจัยและพัฒนา",
+  "หมวดลงทุนอื่นๆ",
+  "หมวดสำรองกรณีจำเป็นเร่งด่วน",
+  "หมวดสำรองราคา",
+]
+
+interface CreateForm {
+  name: string
+  project_type: string
+  year: string
+  division: string
+  department: string
+  group_name: string
+}
+
+function CreateProjectModal({ filterOpts, activeYear, onClose, onCreated }: {
+  filterOpts: FilterOptions
+  activeYear: number
+  onClose: () => void
+  onCreated: (code: string) => void
+}) {
+  const [form, setForm] = useState<CreateForm>({
+    name: "", project_type: "Y", year: String(activeYear),
+    division: "", department: "", group_name: "",
+  })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  function set(field: keyof CreateForm, value: string) {
+    setForm(f => ({ ...f, [field]: value }))
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    setErr(null)
+    try {
+      const p = await api.createProject({
+        name: form.name,
+        project_type: form.project_type,
+        year: Number(form.year),
+        division: form.division || null,
+        department: form.department || null,
+        group_name: (form.project_type === "Y" || form.project_type === "CY") ? (form.group_name || null) : null,
+        item_no: "xx",
+      })
+      onCreated(p.project_code)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "เกิดข้อผิดพลาด")
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold mb-4">สร้างโครงการใหม่</h2>
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">ชื่อโครงการ <span className="text-red-500">*</span></label>
+            <input
+              className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.name} onChange={e => set("name", e.target.value)} required
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">ปีงบประมาณ <span className="text-red-500">*</span></label>
+              <input
+                type="number" min="2500" max="2600"
+                className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.year} onChange={e => set("year", e.target.value)} required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">ประเภท <span className="text-red-500">*</span></label>
+              <select
+                className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.project_type} onChange={e => set("project_type", e.target.value)}
+              >
+                <option value="Y">Y — งานรายปี</option>
+                <option value="CY">CY — เปลี่ยนแปลงงบรายปี</option>
+                <option value="C">C — แผนงาน</option>
+                <option value="CC">CC — เปลี่ยนแปลงแผนงาน</option>
+                <option value="L">L — สัญญาเช่า</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">กอง</label>
+              <select
+                className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.division} onChange={e => set("division", e.target.value)}
+              >
+                <option value="">— ไม่ระบุ —</option>
+                {filterOpts.divisions.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">สายงาน</label>
+              <select
+                className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.department} onChange={e => set("department", e.target.value)}
+              >
+                <option value="">— ไม่ระบุ —</option>
+                {filterOpts.departments.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+          </div>
+          {(form.project_type === "Y" || form.project_type === "CY") && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">หมวด</label>
+              <select
+                className="w-full border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={form.group_name} onChange={e => set("group_name", e.target.value)}
+              >
+                <option value="">— ไม่ระบุ —</option>
+                {HMWAT_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+          )}
+          {err && <p className="text-sm text-red-600">{err}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-1.5 text-sm rounded-md border hover:bg-gray-50">
+              ยกเลิก
+            </button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+              {saving ? "กำลังสร้าง..." : "สร้างโครงการ"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 export default function ProjectsPage() {
+  const router = useRouter()
   const [activeYear, setActiveYear] = useState<number | null>(null)
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const [availableYears, setAvailableYears] = useState<number[]>([])
   const [items, setItems] = useState<ProjectOverviewItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [filterOpts, setFilterOpts] = useState<FilterOptions | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
 
   useEffect(() => {
     Promise.all([api.getActiveYear(), api.filterOptions()])
@@ -97,6 +248,7 @@ export default function ProjectsPage() {
         setActiveYear(setting.active_year)
         setSelectedYear(setting.active_year)
         setAvailableYears(opts.years)
+        setFilterOpts(opts)
       })
       .catch((e: Error) => setError(e.message))
   }, [])
@@ -134,6 +286,14 @@ export default function ProjectsPage() {
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
+      {showCreate && filterOpts && activeYear && (
+        <CreateProjectModal
+          filterOpts={filterOpts}
+          activeYear={activeYear}
+          onClose={() => setShowCreate(false)}
+          onCreated={(code) => router.push(`/projects/${code}`)}
+        />
+      )}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold">โครงการทั้งหมด</h1>
@@ -154,6 +314,12 @@ export default function ProjectsPage() {
               </option>
             ))}
           </select>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700"
+          >
+            + สร้างโครงการ
+          </button>
           <Link href="/import/log" className="text-sm text-blue-600 hover:underline">
             ประวัติการนำเข้า →
           </Link>

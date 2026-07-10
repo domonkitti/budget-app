@@ -64,6 +64,8 @@ async function del(path: string): Promise<void> {
 export const api = {
   projects: (params?: Record<string, string>) =>
     get<Project[]>("/projects", params),
+  createProject: (data: { name: string; project_type: string; year: number; division?: string | null; department?: string | null; group_name?: string | null; item_no?: string | null }) =>
+    post<Project>("/projects", data),
   projectDetail: (code: string) =>
     get<ProjectDetail>(`/projects/${code}`),
   updateProjectInfo: (code: string, data: { name: string; item_no: string | null; year: number; project_type: string; division: string | null; department: string | null; group_name: string | null }) =>

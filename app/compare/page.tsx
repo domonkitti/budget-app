@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
   DndContext,
@@ -14,11 +14,11 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts"
 import { api } from "@/lib/api"
-import type { FlatProject, SourceYearEntry } from "@/lib/types"
+import type { FlatProject, Snapshot, SourceYearEntry } from "@/lib/types"
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-type Mode = "project" | "department"
+type Mode = "project" | "department" | "overall"
 
 const METRICS = [
   { key: "budget_invest", label: "วงเงิน/ลงทุน" },
@@ -249,6 +249,536 @@ function NewGroupZone() {
   )
 }
 
+// ── Overall snapshot comparison ───────────────────────────────────────────────
+
+type OvFundVals = { commit: number; invest: number }
+type OvSourceRow = { source: string; budget: OvFundVals; target: OvFundVals; cut_transfer: number; under_budget: number }
+type OvTypeAgg = { type: string; rows: OvSourceRow[]; budget: OvFundVals; target: OvFundVals; cut_transfer: number; under_budget: number }
+type OvDetail = "total" | "commit" | "invest"
+
+const OV_TYPE_LABELS: Record<string, string> = { Y: "งานรายปี", CY: "เปลี่ยนแปลงงบรายปี", C: "แผนระยะยาว", CC: "เปลี่ยนแปลงแผนงาน", L: "สัญญาเช่า" }
+const OV_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
+  Y:  { bg: "#DBEAFE", text: "#1E3A8A" },
+  CY: { bg: "#CFFAFE", text: "#164E63" },
+  C:  { bg: "#D1FAE5", text: "#065F46" },
+  CC: { bg: "#FFE4E6", text: "#9F1239" },
+  L:  { bg: "#FDE68A", text: "#92400E" },
+}
+
+function ovTotal(v: OvFundVals) { return v.commit + v.invest }
+
+function aggregateOverall(data: FlatProject[], year: number): OvTypeAgg[] {
+  return ["Y", "CY", "C", "CC", "L"].map(type => {
+    const sourceMap: Record<string, { budget: OvFundVals; target: OvFundVals; cut_transfer: number; under_budget: number }> = {}
+    data.filter(p => p.project_type === type).forEach(p => {
+      p.source_breakdown.filter(e => e.year === year).forEach(e => {
+        if (!sourceMap[e.source]) sourceMap[e.source] = {
+          budget: { commit: 0, invest: 0 }, target: { commit: 0, invest: 0 },
+          cut_transfer: 0, under_budget: 0,
+        }
+        if (e.fund_type === "ผูกพัน") {
+          sourceMap[e.source].budget.commit += e.budget
+          sourceMap[e.source].target.commit += e.target
+        } else {
+          sourceMap[e.source].budget.invest += e.budget
+          sourceMap[e.source].target.invest += e.target
+        }
+        sourceMap[e.source].cut_transfer += e.cut_transfer
+        sourceMap[e.source].under_budget += e.under_budget
+      })
+    })
+    const rows = Object.entries(sourceMap)
+      .map(([source, vals]) => ({ source, ...vals }))
+      .filter(r => ovTotal(r.budget) !== 0 || ovTotal(r.target) !== 0)
+    const budget: OvFundVals = { commit: 0, invest: 0 }
+    const target: OvFundVals = { commit: 0, invest: 0 }
+    let cut_transfer = 0, under_budget = 0
+    rows.forEach(r => {
+      budget.commit += r.budget.commit; budget.invest += r.budget.invest
+      target.commit += r.target.commit; target.invest += r.target.invest
+      cut_transfer += r.cut_transfer; under_budget += r.under_budget
+    })
+    return { type, rows, budget, target, cut_transfer, under_budget }
+  }).filter(t => ovTotal(t.budget) !== 0 || ovTotal(t.target) !== 0)
+}
+
+function loadSource(src: string): Promise<FlatProject[]> {
+  return src.startsWith("snap-")
+    ? api.getSnapshot(parseInt(src.slice(5), 10)).then(d => d.data)
+    : api.flatProjects()
+}
+
+function getSourceLabel(src: string, snapshots: Snapshot[]) {
+  if (src === "live") return "Live"
+  const id = parseInt(src.slice(5), 10)
+  return snapshots.find(s => s.id === id)?.label ?? src
+}
+
+function fmtOv(n: number) {
+  if (n === 0) return <span className="text-gray-300">—</span>
+  return <>{n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}</>
+}
+
+function fmtDelta(delta: number) {
+  if (Math.abs(delta) < 0.0005) return <span className="text-gray-300">—</span>
+  const s = Math.abs(delta).toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+  return delta > 0
+    ? <span className="text-emerald-600">{s}</span>
+    : <span className="text-red-500">({s})</span>
+}
+
+function getProjectVals(p: FlatProject, year: number) {
+  const entries = p.source_breakdown.filter(e => e.year === year)
+  const b_commit = entries.filter(e => e.fund_type === "ผูกพัน").reduce((s, e) => s + e.budget, 0)
+  const b_invest = entries.filter(e => e.fund_type === "ลงทุน").reduce((s, e) => s + e.budget, 0)
+  const t_commit = entries.filter(e => e.fund_type === "ผูกพัน").reduce((s, e) => s + e.target, 0)
+  const t_invest = entries.filter(e => e.fund_type === "ลงทุน").reduce((s, e) => s + e.target, 0)
+  const cut = entries.reduce((s, e) => s + e.cut_transfer, 0)
+  const ub = entries.reduce((s, e) => s + e.under_budget, 0)
+  return { b_commit, b_invest, budget: b_commit + b_invest, t_commit, t_invest, target: t_commit + t_invest, cut, ub }
+}
+
+function OverallCompare() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const src1 = params.get("src1") ?? "live"
+  const src2 = params.get("src2") ?? "live"
+  const detailParam = params.get("detail")
+  const detail: OvDetail = (detailParam === "commit" || detailParam === "invest") ? detailParam : "total"
+
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [data1, setData1] = useState<FlatProject[]>([])
+  const [data2, setData2] = useState<FlatProject[]>([])
+  const [loading1, setLoading1] = useState(true)
+  const [loading2, setLoading2] = useState(true)
+  const scrollRef1 = useRef<HTMLDivElement>(null)
+  const scrollRef2 = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { api.snapshots().then(setSnapshots) }, [])
+  useEffect(() => { setLoading1(true); loadSource(src1).then(d => { setData1(d); setLoading1(false) }) }, [src1])
+  useEffect(() => { setLoading2(true); loadSource(src2).then(d => { setData2(d); setLoading2(false) }) }, [src2])
+
+  useEffect(() => {
+    const el1 = scrollRef1.current
+    const el2 = scrollRef2.current
+    if (!el1 || !el2) return
+    let busy = false
+    const s1 = () => { if (!busy) { busy = true; el2.scrollLeft = el1.scrollLeft; busy = false } }
+    const s2 = () => { if (!busy) { busy = true; el1.scrollLeft = el2.scrollLeft; busy = false } }
+    el1.addEventListener("scroll", s1)
+    el2.addEventListener("scroll", s2)
+    return () => { el1.removeEventListener("scroll", s1); el2.removeEventListener("scroll", s2) }
+  })
+
+  const currentBEYear = new Date().getFullYear() + 543
+
+  const allYears = useMemo(() => {
+    const s = new Set<number>()
+    ;[...data1, ...data2].forEach(p => p.source_breakdown.forEach(e => s.add(e.year)))
+    return [...s].sort()
+  }, [data1, data2])
+
+  const ovYearFrom = params.get("ovyfrom")
+  const ovYearTo = params.get("ovyto")
+  const yearFrom = ovYearFrom ? Number(ovYearFrom) : currentBEYear
+  const yearTo = ovYearTo ? Number(ovYearTo) : currentBEYear + 2
+
+  const displayYears = useMemo(() => {
+    const filtered = allYears.filter(y => y >= yearFrom && y <= yearTo)
+    return filtered.length > 0 ? filtered : allYears.slice(0, 3)
+  }, [allYears, yearFrom, yearTo])
+
+  function setOvUrl(overrides: { src1?: string; src2?: string; detail?: OvDetail; ovyfrom?: number; ovyto?: number }) {
+    const p = new URLSearchParams()
+    p.set("mode", "overall")
+    const s1 = overrides.src1 ?? src1
+    const s2 = overrides.src2 ?? src2
+    if (s1 !== "live") p.set("src1", s1)
+    if (s2 !== "live") p.set("src2", s2)
+    const det: OvDetail = overrides.detail ?? detail
+    if (det !== "total") p.set("detail", det)
+    const yf = "ovyfrom" in overrides ? overrides.ovyfrom! : yearFrom
+    const yt = "ovyto" in overrides ? overrides.ovyto! : yearTo
+    if (yf !== currentBEYear) p.set("ovyfrom", String(yf))
+    if (yt !== currentBEYear + 2) p.set("ovyto", String(yt))
+    router.replace(`/compare?${p.toString()}`)
+  }
+
+  const agg1ByYear = useMemo(() => {
+    const r: Record<number, OvTypeAgg[]> = {}
+    displayYears.forEach(y => { r[y] = aggregateOverall(data1, y) })
+    return r
+  }, [data1, displayYears])
+
+  const agg2ByYear = useMemo(() => {
+    const r: Record<number, OvTypeAgg[]> = {}
+    displayYears.forEach(y => { r[y] = aggregateOverall(data2, y) })
+    return r
+  }, [data2, displayYears])
+
+  const emptyFunds: OvFundVals = { commit: 0, invest: 0 }
+  const emptyGrand = { budget: emptyFunds, target: emptyFunds }
+
+  const grand1ByYear = useMemo(() => {
+    const r: Record<number, typeof emptyGrand> = {}
+    displayYears.forEach(y => {
+      r[y] = (agg1ByYear[y] ?? []).reduce(
+        (a, t) => ({ budget: { commit: a.budget.commit + t.budget.commit, invest: a.budget.invest + t.budget.invest }, target: { commit: a.target.commit + t.target.commit, invest: a.target.invest + t.target.invest } }),
+        { budget: { commit: 0, invest: 0 }, target: { commit: 0, invest: 0 } }
+      )
+    })
+    return r
+  }, [agg1ByYear, displayYears])
+
+  const grand2ByYear = useMemo(() => {
+    const r: Record<number, typeof emptyGrand> = {}
+    displayYears.forEach(y => {
+      r[y] = (agg2ByYear[y] ?? []).reduce(
+        (a, t) => ({ budget: { commit: a.budget.commit + t.budget.commit, invest: a.budget.invest + t.budget.invest }, target: { commit: a.target.commit + t.target.commit, invest: a.target.invest + t.target.invest } }),
+        { budget: { commit: 0, invest: 0 }, target: { commit: 0, invest: 0 } }
+      )
+    })
+    return r
+  }, [agg2ByYear, displayYears])
+
+  const allTypes = useMemo(() => {
+    const types = new Set<string>()
+    displayYears.forEach(y => {
+      ;(agg1ByYear[y] ?? []).forEach(t => types.add(t.type))
+      ;(agg2ByYear[y] ?? []).forEach(t => types.add(t.type))
+    })
+    return ["Y", "CY", "C", "CC", "L"].filter(t => types.has(t))
+  }, [agg1ByYear, agg2ByYear, displayYears])
+
+  const diffProjects = useMemo(() => {
+    if (displayYears.length === 0) return []
+    const empty = { b_commit: 0, b_invest: 0, budget: 0, t_commit: 0, t_invest: 0, target: 0, cut: 0, ub: 0 }
+    type PV = typeof empty
+    const map1 = new Map(data1.map(p => [p.project_code, p]))
+    const map2 = new Map(data2.map(p => [p.project_code, p]))
+    const codes = new Set([...map1.keys(), ...map2.keys()])
+    const result: Array<{ code: string; name: string; ptype: string; valsByYear: Record<number, { v1: PV; v2: PV }> }> = []
+    for (const code of codes) {
+      const p1 = map1.get(code)
+      const p2 = map2.get(code)
+      const valsByYear: Record<number, { v1: PV; v2: PV }> = {}
+      let hasDiff = false
+      for (const year of displayYears) {
+        const v1 = p1 ? getProjectVals(p1, year) : empty
+        const v2 = p2 ? getProjectVals(p2, year) : empty
+        valsByYear[year] = { v1, v2 }
+        if (Math.abs(v1.budget - v2.budget) > 0.0005 || Math.abs(v1.target - v2.target) > 0.0005) hasDiff = true
+      }
+      if (hasDiff) result.push({ code, name: (p1 ?? p2)!.name, ptype: (p1 ?? p2)!.project_type, valsByYear })
+    }
+    return result.sort((a, b) => {
+      const da = displayYears.reduce((s, y) => s + Math.abs(a.valsByYear[y].v2.budget - a.valsByYear[y].v1.budget), 0)
+      const db = displayYears.reduce((s, y) => s + Math.abs(b.valsByYear[y].v2.budget - b.valsByYear[y].v1.budget), 0)
+      return db - da
+    })
+  }, [data1, data2, displayYears])
+
+  const sourceLabel1 = getSourceLabel(src1, snapshots)
+  const sourceLabel2 = getSourceLabel(src2, snapshots)
+  const loading = loading1 || loading2
+
+  function detailVal(v: OvFundVals): number {
+    if (detail === "commit") return v.commit
+    if (detail === "invest") return v.invest
+    return ovTotal(v)
+  }
+  const budgetLabel = detail === "commit" ? "งบผูกพัน" : detail === "invest" ? "งบลงทุน" : "วงเงินดำเนินการ"
+  const targetLabel = detail === "commit" ? "เป้าผูกพัน" : detail === "invest" ? "เป้าลงทุน" : "เป้าหมายการเบิกจ่าย"
+
+  const sourceOptions = [
+    { value: "live", label: "Live" },
+    ...snapshots.map(s => ({ value: `snap-${s.id}`, label: s.label })),
+  ]
+
+  const tdN = "py-1 px-2 text-right tabular-nums text-xs whitespace-nowrap"
+  const thS = "py-1.5 px-2 text-center text-[11px] font-medium whitespace-nowrap"
+  const LABEL_W = 220
+
+  function abd(a: number, b: number, extraCls = "") {
+    return (
+      <>
+        <td className={`${tdN} ${extraCls}`} style={{ minWidth: 100 }}>{fmtOv(a)}</td>
+        <td className={`${tdN} text-center border-l border-r border-gray-200 bg-gray-50`} style={{ minWidth: 90 }}>{fmtDelta(b - a)}</td>
+        <td className={tdN} style={{ minWidth: 100 }}>{fmtOv(b)}</td>
+      </>
+    )
+  }
+  function abdBold(a: number, b: number, color: string, extraCls = "") {
+    return (
+      <>
+        <td className={`${tdN} font-bold ${extraCls}`} style={{ color, minWidth: 100 }}>{fmtOv(a)}</td>
+        <td className={`${tdN} font-bold text-center border-l border-r border-gray-200 bg-gray-50`} style={{ minWidth: 90 }}>{fmtDelta(b - a)}</td>
+        <td className={`${tdN} font-bold`} style={{ color, minWidth: 100 }}>{fmtOv(b)}</td>
+      </>
+    )
+  }
+
+  const colsPerYear = 6   // 2 metrics × 3 cols (A | Δ | B)
+  const totalCols = 1 + displayYears.length * colsPerYear
+
+  // Returns the left-border class for the first column of each year group
+  function yearBorder(yi: number) {
+    return yi === 0 ? "border-l-2 border-indigo-200" : "border-l-2 border-gray-300"
+  }
+
+  // Shared 3-row thead for both tables
+  function renderThead(labelText: string) {
+    return (
+      <thead>
+        {/* Row 1 — year groups */}
+        <tr className="border-b bg-gray-50">
+          <th
+            rowSpan={3}
+            className="text-left py-1.5 px-3 font-medium text-xs text-gray-500 sticky left-0 bg-white z-10 border-r"
+            style={{ width: LABEL_W, minWidth: LABEL_W }}
+          >
+            {labelText}
+          </th>
+          {displayYears.map((year, yi) => (
+            <th
+              key={year}
+              colSpan={colsPerYear}
+              className={`${thS} text-gray-600 ${yearBorder(yi)}`}
+            >
+              ปี {year}
+            </th>
+          ))}
+        </tr>
+        {/* Row 2 — metric groups per year */}
+        <tr className="border-b">
+          {displayYears.map((year, yi) => (
+            <Fragment key={year}>
+              <th className={`${thS} text-gray-500 ${yearBorder(yi)}`} colSpan={3}>{budgetLabel}</th>
+              <th className={`${thS} text-gray-500 border-l`} colSpan={3}>{targetLabel}</th>
+            </Fragment>
+          ))}
+        </tr>
+        {/* Row 3 — A / ปรับ / B per metric per year */}
+        <tr className="border-b bg-gray-50">
+          {displayYears.map((year, yi) => (
+            <Fragment key={year}>
+              {[0, 1].map(gi => (
+                <Fragment key={gi}>
+                  <th className={`${thS} text-indigo-500 ${gi === 0 ? yearBorder(yi) : "border-l"}`} style={{ minWidth: 100 }}>{sourceLabel1}</th>
+                  <th className={`${thS} text-gray-400 border-l border-r border-gray-200`} style={{ minWidth: 90 }}>ปรับ เพิ่ม/(ลด)</th>
+                  <th className={`${thS} text-amber-500`} style={{ minWidth: 100 }}>{sourceLabel2}</th>
+                </Fragment>
+              ))}
+            </Fragment>
+          ))}
+        </tr>
+      </thead>
+    )
+  }
+
+  return (
+    <div className="bg-gray-50 min-h-screen">
+      {/* Top bar */}
+      <div className="bg-white border-b px-6 py-3 flex items-center gap-4 flex-wrap">
+        <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+          {(["project", "department", "overall"] as const).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => { if (m !== "overall") router.replace(`/compare?mode=${m}`) }}
+              className={`px-4 py-1 rounded-md text-xs font-semibold transition-colors ${
+                m === "overall" ? "bg-indigo-500 text-white" : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {m === "project" ? "Project" : m === "department" ? "Department" : "Overall"}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 rounded px-1.5 py-0.5">A</span>
+          <select value={src1} onChange={e => setOvUrl({ src1: e.target.value })} className="border rounded-lg px-2 py-1 text-xs text-gray-700">
+            {sourceOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <span className="text-xs text-gray-400">vs</span>
+          <span className="text-xs font-semibold text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">B</span>
+          <select value={src2} onChange={e => setOvUrl({ src2: e.target.value })} className="border rounded-lg px-2 py-1 text-xs text-gray-700">
+            {sourceOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+
+        {allYears.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 font-medium">ปี:</span>
+            <select
+              value={yearFrom}
+              onChange={e => setOvUrl({ ovyfrom: Number(e.target.value) })}
+              className="border rounded-lg px-2 py-1 text-xs text-gray-700"
+            >
+              {allYears.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <span className="text-xs text-gray-400">–</span>
+            <select
+              value={yearTo}
+              onChange={e => setOvUrl({ ovyto: Number(e.target.value) })}
+              className="border rounded-lg px-2 py-1 text-xs text-gray-700"
+            >
+              {allYears.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5 ml-auto">
+          <span className="text-xs text-gray-400">Detail:</span>
+          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+            {(["total", "commit", "invest"] as OvDetail[]).map(d => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setOvUrl({ detail: d })}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  detail === d ? "bg-white shadow text-gray-700" : "text-gray-400 hover:text-gray-600"
+                }`}
+              >
+                {d === "total" ? "รวม" : d === "commit" ? "ผูกพัน" : "ลงทุน"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-6 space-y-4">
+        {loading && <div className="text-center py-20 text-gray-400 text-sm">Loading…</div>}
+
+        {!loading && displayYears.length > 0 && (
+          <div ref={scrollRef1} className="bg-white rounded-xl border overflow-x-auto">
+            <div className="p-4 border-b flex items-center gap-3">
+              <h3 className="text-sm font-semibold text-gray-600">สรุปงบประมาณ ปี {displayYears.join(" · ")}</h3>
+              <span className="text-xs text-gray-400">หน่วย: ล้านบาท</span>
+            </div>
+            <table className="text-xs border-collapse">
+              {renderThead("ประเภท / แหล่งเงิน")}
+              <tbody>
+                {allTypes.map(type => {
+                  const colors = OV_TYPE_COLORS[type] ?? { bg: "#F3F4F6", text: "#374151" }
+                  const allSources = [...new Set(displayYears.flatMap(y => [
+                    ...((agg1ByYear[y] ?? []).find(t => t.type === type)?.rows.map(r => r.source) ?? []),
+                    ...((agg2ByYear[y] ?? []).find(t => t.type === type)?.rows.map(r => r.source) ?? []),
+                  ]))]
+                  return (
+                    <Fragment key={type}>
+                      <tr>
+                        <td colSpan={totalCols} className="py-1.5 px-3 text-xs font-semibold" style={{ background: colors.bg, color: colors.text }}>
+                          {OV_TYPE_LABELS[type] ?? type}
+                        </td>
+                      </tr>
+                      {allSources.map(source => (
+                        <tr key={source} className="border-b border-gray-50">
+                          <td className="py-1 pl-6 pr-3 text-gray-500 text-xs sticky left-0 bg-white z-10" style={{ width: LABEL_W, minWidth: LABEL_W }}>– {source}</td>
+                          {displayYears.map((year, yi) => {
+                            const t1y = (agg1ByYear[year] ?? []).find(t => t.type === type)
+                            const t2y = (agg2ByYear[year] ?? []).find(t => t.type === type)
+                            const rb1 = t1y?.rows.find(r => r.source === source)?.budget ?? emptyFunds
+                            const rb2 = t2y?.rows.find(r => r.source === source)?.budget ?? emptyFunds
+                            const rt1 = t1y?.rows.find(r => r.source === source)?.target ?? emptyFunds
+                            const rt2 = t2y?.rows.find(r => r.source === source)?.target ?? emptyFunds
+                            const yb = yearBorder(yi)
+                            return (
+                              <Fragment key={year}>
+                                {abd(detailVal(rb1), detailVal(rb2), yb)}
+                                {abd(detailVal(rt1), detailVal(rt2), "border-l")}
+                              </Fragment>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                      <tr style={{ background: colors.bg }}>
+                        <td className="py-1.5 px-3 font-semibold text-xs sticky left-0 z-10" style={{ color: colors.text, background: colors.bg, width: LABEL_W, minWidth: LABEL_W }}>
+                          รวม{OV_TYPE_LABELS[type] ?? type}
+                        </td>
+                        {displayYears.map((year, yi) => {
+                          const t1y = (agg1ByYear[year] ?? []).find(t => t.type === type)
+                          const t2y = (agg2ByYear[year] ?? []).find(t => t.type === type)
+                          const b1 = t1y?.budget ?? emptyFunds
+                          const b2 = t2y?.budget ?? emptyFunds
+                          const tg1 = t1y?.target ?? emptyFunds
+                          const tg2 = t2y?.target ?? emptyFunds
+                          const yb = yearBorder(yi)
+                          return (
+                            <Fragment key={year}>
+                              {abdBold(detailVal(b1), detailVal(b2), colors.text, yb)}
+                              {abdBold(detailVal(tg1), detailVal(tg2), colors.text, "border-l")}
+                            </Fragment>
+                          )
+                        })}
+                      </tr>
+                    </Fragment>
+                  )
+                })}
+                {allTypes.length > 0 && (
+                  <tr className="bg-gray-100 border-t">
+                    <td className="py-1.5 px-3 font-bold text-xs text-gray-700 sticky left-0 bg-gray-100 z-10" style={{ width: LABEL_W, minWidth: LABEL_W }}>รวมทั้งหมด</td>
+                    {displayYears.map((year, yi) => {
+                      const g1 = grand1ByYear[year] ?? emptyGrand
+                      const g2 = grand2ByYear[year] ?? emptyGrand
+                      const yb = yearBorder(yi)
+                      return (
+                        <Fragment key={year}>
+                          {abd(detailVal(g1.budget), detailVal(g2.budget), `${yb} font-bold text-gray-700`)}
+                          {abd(detailVal(g1.target), detailVal(g2.target), "border-l font-bold text-gray-700")}
+                        </Fragment>
+                      )
+                    })}
+                  </tr>
+                )}
+                {allTypes.length === 0 && (
+                  <tr>
+                    <td colSpan={totalCols} className="py-6 text-center text-gray-400 text-xs">ไม่มีข้อมูล</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!loading && displayYears.length > 0 && diffProjects.length > 0 && (
+          <div ref={scrollRef2} className="bg-white rounded-xl border overflow-x-auto">
+            <div className="p-4 border-b flex items-center gap-3">
+              <h3 className="text-sm font-semibold text-gray-600">รายการที่เปลี่ยนแปลง</h3>
+              <span className="text-xs text-gray-400">{diffProjects.length} รายการ · หน่วย: ล้านบาท</span>
+            </div>
+            <table className="text-xs border-collapse">
+              {renderThead("รายการ")}
+              <tbody>
+                {diffProjects.map(({ code, name, ptype, valsByYear }) => {
+                  const rc = OV_TYPE_COLORS[ptype] ?? { bg: "#FFFFFF", text: "#374151" }
+                  const bv = detail === "commit" ? "b_commit" : detail === "invest" ? "b_invest" : "budget"
+                  const tv = detail === "commit" ? "t_commit" : detail === "invest" ? "t_invest" : "target"
+                  return (
+                    <tr key={code} className="border-b border-gray-50" style={{ background: rc.bg }}>
+                      <td className="py-1 px-3 text-xs sticky left-0 z-10 whitespace-normal" style={{ width: LABEL_W, minWidth: LABEL_W, background: rc.bg, color: rc.text }}>{name}</td>
+                      {displayYears.map((year, yi) => {
+                        const { v1, v2 } = valsByYear[year]
+                        const yb = yearBorder(yi)
+                        return (
+                          <Fragment key={year}>
+                            {abd(v1[bv], v2[bv], yb)}
+                            {abd(v1[tv], v2[tv], "border-l")}
+                          </Fragment>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Page shell ────────────────────────────────────────────────────────────────
 
 export default function ComparePage() {
@@ -258,6 +788,13 @@ export default function ComparePage() {
 // ── Main component ────────────────────────────────────────────────────────────
 
 function CompareInner() {
+  const params = useSearchParams()
+  const mode: Mode = (params.get("mode") as Mode) ?? "project"
+  if (mode === "overall") return <OverallCompare />
+  return <ProjectDeptCompare />
+}
+
+function ProjectDeptCompare() {
   const router = useRouter()
   const params = useSearchParams()
   const mode: Mode = (params.get("mode") as Mode) ?? "project"
@@ -271,14 +808,25 @@ function CompareInner() {
     return groups.map((_, i) => decoded[i] || `Group ${i + 1}`)
   }, [params, groups])
 
+  const sourceParam = params.get("source") ?? "live"
+
   const [projects, setProjects] = useState<FlatProject[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
 
   useEffect(() => {
-    api.flatProjects().then(d => { setProjects(d); setLoading(false) })
+    api.snapshots().then(setSnapshots)
   }, [])
+
+  useEffect(() => {
+    setLoading(true)
+    const load = sourceParam.startsWith("snap-")
+      ? api.getSnapshot(parseInt(sourceParam.slice(5), 10)).then(d => d.data)
+      : api.flatProjects()
+    load.then(d => { setProjects(d); setLoading(false) })
+  }, [sourceParam])
 
   const allYears = useMemo(() => {
     const s = new Set<number>()
@@ -336,6 +884,7 @@ function CompareInner() {
     names?: string[]
     metrics?: string[]
     years?: number[] | null
+    source?: string
   }) {
     const _mode = overrides.mode ?? mode
     const _groups = overrides.groups ?? groups
@@ -343,6 +892,8 @@ function CompareInner() {
 
     const p = new URLSearchParams()
     p.set("mode", _mode)
+    const _source = overrides.source ?? sourceParam
+    if (_source !== "live") p.set("source", _source)
     if (_groups.length) p.set("groups", encodeGroups(_groups))
 
     const namesToSave = _groups.map((_, i) => _names[i] || `Group ${i + 1}`)
@@ -459,19 +1010,51 @@ function CompareInner() {
         {/* Top bar */}
         <div className="bg-white border-b px-6 py-3 flex items-center gap-3 shrink-0">
           <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-            {(["project", "department"] as Mode[]).map(m => (
+            {(["project", "department", "overall"] as Mode[]).map(m => (
               <button
                 key={m}
                 type="button"
-                onClick={() => switchMode(m)}
+                onClick={() => m === "overall" ? router.replace("/compare?mode=overall") : switchMode(m)}
                 className={`px-4 py-1 rounded-md text-xs font-semibold transition-colors ${
                   mode === m ? "bg-indigo-500 text-white" : "text-gray-500 hover:text-gray-700"
                 }`}
               >
-                {m === "project" ? "Project" : "Department"}
+                {m === "project" ? "Project" : m === "department" ? "Department" : "Overall"}
               </button>
             ))}
           </div>
+
+          {/* Source picker */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-gray-400 font-medium">Source:</span>
+            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+              <button
+                type="button"
+                onClick={() => setUrl({ source: "live" })}
+                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                  sourceParam === "live" ? "bg-white shadow text-gray-700" : "text-gray-400 hover:text-gray-600"
+                }`}
+              >
+                Live
+              </button>
+              {snapshots.map(s => {
+                const key = `snap-${s.id}`
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => setUrl({ source: key })}
+                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                      sourceParam === key ? "bg-white shadow text-gray-700" : "text-gray-400 hover:text-gray-600"
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <span className="text-xs text-gray-400">
             {compiled.length === 0
               ? "Drag items from the left into a group"

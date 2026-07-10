@@ -31,3 +31,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  /* PDF export is now "picture capture": Playwright screenshots each
+     .page-card-body at its natural on-screen size and drops the image
+     onto its own PDF page (see ReportView.tsx page-card model and
+     app/api/report-pdf/route.ts). Print mode here only needs to hide
+     admin/nav chrome and un-clip internal scrollboxes so a tall table's
+     full content is visible in the capture — no reflow/repositioning. */
+  .no-print {
+    display: none !important;
+  }
+  .report-print-area .react-grid-item {
+    /* react-grid-layout animates position/size changes for on-screen drag —
+       without killing that here, a capture could land mid-transition. */
+    transition: none !important;
+  }
+  .report-print-area .overflow-auto,
+  .report-print-area .overflow-hidden {
+    overflow: visible !important;
+  }
+  .report-print-area .min-h-0 {
+    min-height: 0 !important;
+  }
+  .report-print-area .h-full,
+  .report-print-area .flex-1 {
+    height: auto !important;
+    flex: none !important;
+  }
+}

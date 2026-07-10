@@ -16,7 +16,7 @@ const fmt3 = (n: number) =>
 // ── Column structure (same as edit page) ──────────────────────────────────────
 
 const COL_GROUPS = [
-  { label: "งบเงินดำเนินการ",    cols: 3, bg: "rgba(96,165,250,0.15)",  subBg: "rgba(96,165,250,0.08)" },
+  { label: "วงเงินดำเนินการ",    cols: 3, bg: "rgba(96,165,250,0.15)",  subBg: "rgba(96,165,250,0.08)" },
   { label: "เป้าหมายการเบิกจ่าย", cols: 3, bg: "rgba(52,211,153,0.15)",  subBg: "rgba(52,211,153,0.08)" },
   { label: "คงเหลือ",             cols: 3, bg: "rgba(251,191,36,0.15)",  subBg: "rgba(251,191,36,0.08)" },
   { label: "ตัดทิ้ง/โยกย้าย",   cols: 1, bg: "rgba(239,68,68,0.12)",   subBg: "rgba(239,68,68,0.06)" },

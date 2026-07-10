@@ -850,7 +850,7 @@ export default function CategoryPage() {
                     <YAxis tickFormatter={value => Number(value).toFixed(1) + "M"} tick={{ fontSize: 11 }} width={52} />
                     <Tooltip formatter={value => fmt(Number(value))} />
                     <Legend />
-                    <Bar dataKey="budget" name="งบเงินดำเนินการปี" fill={BAR_COLORS.budget} radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="budget" name="วงเงินดำเนินการปี" fill={BAR_COLORS.budget} radius={[3, 3, 0, 0]} />
                     <Bar dataKey="target" name="เป้าหมายการเบิกจ่ายปี" fill={BAR_COLORS.target} radius={[3, 3, 0, 0]} />
                     <Bar dataKey="remain" name="คงเหลือ" fill={BAR_COLORS.remain} radius={[3, 3, 0, 0]} />
                   </BarChart>
