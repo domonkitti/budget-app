@@ -1,45 +1,62 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { ReportGroup, Report } from '@/lib/reportTypes'
-import { MOCK_GROUPS, MOCK_REPORTS } from '@/lib/reportMock'
+import { reportApi } from '@/lib/reportApi'
 import { fmtMillion } from '@/lib/reportTypes'
 
 export default function ReportAdminPage() {
-  const [groups, setGroups] = useState<ReportGroup[]>(MOCK_GROUPS)
-  const [reports, setReports] = useState<Report[]>(MOCK_REPORTS)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(groups.map(g => g.id)))
+  const [groups, setGroups] = useState<ReportGroup[]>([])
+  const [reports, setReports] = useState<Report[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
   const [editingGroupName, setEditingGroupName] = useState('')
   const [newGroupName, setNewGroupName] = useState('')
   const [showNewGroup, setShowNewGroup] = useState(false)
 
+  useEffect(() => {
+    Promise.all([reportApi.reportGroups(), reportApi.reports()])
+      .then(([g, r]) => {
+        setGroups(g)
+        setReports(r)
+        setExpanded(new Set(g.map(gr => gr.id)))
+      })
+      .catch(err => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false))
+  }, [])
+
   const toggle = (id: string) =>
     setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
-  function addGroup() {
+  async function addGroup() {
     if (!newGroupName.trim()) return
-    const id = `g${Date.now()}`
-    setGroups(g => [...g, { id, name: newGroupName.trim(), order: g.length }])
-    setExpanded(s => new Set([...s, id]))
+    const g = await reportApi.createReportGroup(newGroupName.trim())
+    setGroups(gs => [...gs, g])
+    setExpanded(s => new Set([...s, g.id]))
     setNewGroupName('')
     setShowNewGroup(false)
   }
 
-  function renameGroup(id: string) {
+  async function renameGroup(id: string) {
     if (!editingGroupName.trim()) return
-    setGroups(g => g.map(gr => gr.id === id ? { ...gr, name: editingGroupName.trim() } : gr))
+    const name = editingGroupName.trim()
+    await reportApi.renameReportGroup(id, name)
+    setGroups(g => g.map(gr => gr.id === id ? { ...gr, name } : gr))
     setEditingGroupId(null)
   }
 
-  function deleteGroup(id: string) {
+  async function deleteGroup(id: string) {
     if (!confirm('ลบกลุ่มนี้? รายงานทั้งหมดในกลุ่มจะถูกลบด้วย')) return
+    await reportApi.deleteReportGroup(id)
     setGroups(g => g.filter(gr => gr.id !== id))
     setReports(r => r.filter(rp => rp.groupId !== id))
   }
 
-  function deleteReport(id: string) {
+  async function deleteReport(id: string) {
+    await reportApi.deleteReport(id)
     setReports(r => r.filter(rp => rp.id !== id))
   }
 
@@ -80,6 +97,10 @@ export default function ReportAdminPage() {
           )}
         </div>
 
+        {loading && <p className="text-sm text-gray-400">กำลังโหลด...</p>}
+        {error && <p className="text-sm text-red-500">โหลดข้อมูลไม่สำเร็จ: {error}</p>}
+
+        {!loading && !error && (
         <div className="space-y-4">
           {groups.sort((a, b) => a.order - b.order).map(group => {
             const groupReports = reports.filter(r => r.groupId === group.id)
@@ -185,6 +206,7 @@ export default function ReportAdminPage() {
             )
           })}
         </div>
+        )}
       </div>
     </div>
   )

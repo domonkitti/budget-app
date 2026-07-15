@@ -1,8 +1,14 @@
 import type { Report } from "./reportTypes"
-import { THAI_MONTHS } from "./reportTypes"
+import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP } from "./reportTypes"
 
 function workbookSafeName(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, "_")
+}
+
+// Report data stores amounts in ล้านบาท; the exported Excel is the real-baht exchange
+// format (matches how a future import would read full baht figures back into the DB).
+function toBaht(millionBaht: number) {
+  return Math.round(millionBaht * 1_000_000)
 }
 
 export async function exportReportExcel(report: Report) {
@@ -28,9 +34,9 @@ export async function exportReportExcel(report: Report) {
   infoAoa.push(["พื้นที่", data.basicInfo.area])
   infoAoa.push(["ระยะเวลา (ปี)", data.basicInfo.durationYears])
   infoAoa.push(["ปีเริ่ม - ปีสิ้นสุด", `${data.basicInfo.startYear}-${data.basicInfo.endYear}`])
-  infoAoa.push(["วงเงินลงทุนรวม", data.basicInfo.totalInvestment])
-  infoAoa.push(["วงเงินปีนี้", data.basicInfo.yearInvestment])
-  infoAoa.push(["เป้าเบิกจ่าย", data.basicInfo.disbursementTarget])
+  infoAoa.push(["วงเงินลงทุนรวม", toBaht(data.basicInfo.totalInvestment)])
+  infoAoa.push(["วงเงินปีนี้", toBaht(data.basicInfo.yearInvestment)])
+  infoAoa.push(["เป้าเบิกจ่าย", toBaht(data.basicInfo.disbursementTarget)])
   infoAoa.push(["งบทำการ", data.basicInfo.operatingBudget ?? ""])
   infoAoa.push(["วัตถุประสงค์", data.basicInfo.objectives.join(" | ")])
   infoAoa.push([])
@@ -74,24 +80,24 @@ export async function exportReportExcel(report: Report) {
   for (const cat of data.budget.categories) {
     budgetAoa.push([
       cat.name,
-      cat.yearAmount,
-      ...budgetYears.map(y => cat.disbursementByYear.find(d => d.year === y)?.amount ?? 0),
+      toBaht(cat.yearAmount),
+      ...budgetYears.map(y => toBaht(cat.disbursementByYear.find(d => d.year === y)?.amount ?? 0)),
     ])
   }
   if (data.budget.reserve > 0) {
     budgetAoa.push([
       "สำรองค่าปรับราคา",
-      data.budget.reserve,
-      ...budgetYears.map(y => data.budget.reserveByYear.find(d => d.year === y)?.amount ?? 0),
+      toBaht(data.budget.reserve),
+      ...budgetYears.map(y => toBaht(data.budget.reserveByYear.find(d => d.year === y)?.amount ?? 0)),
     ])
   }
   const budgetTotal = data.budget.categories.reduce((s, c) => s + c.yearAmount, 0) + data.budget.reserve
   budgetAoa.push([
     "รวมทั้งสิ้น",
-    budgetTotal,
+    toBaht(budgetTotal),
     ...budgetYears.map(y =>
-      data.budget.categories.reduce((s, c) => s + (c.disbursementByYear.find(d => d.year === y)?.amount ?? 0), 0)
-      + (data.budget.reserveByYear.find(d => d.year === y)?.amount ?? 0)
+      toBaht(data.budget.categories.reduce((s, c) => s + (c.disbursementByYear.find(d => d.year === y)?.amount ?? 0), 0)
+      + (data.budget.reserveByYear.find(d => d.year === y)?.amount ?? 0))
     ),
   ])
 
@@ -104,25 +110,44 @@ export async function exportReportExcel(report: Report) {
   const equipAoa: (string | number)[][] = []
   for (const yearData of data.equipment) {
     equipAoa.push([`ปี ${yearData.year}`])
-    equipAoa.push(["#", "รายการ", "จำนวน", "หน่วย", "ราคา/หน่วย", "รวม", "แหล่งราคา", "กำหนดจ่าย"])
-    let total = 0
+
+    // Group items into their own table when tagged (e.g. ค่าใช้จ่ายหน้างาน/ค่าจ้าง);
+    // untagged items form the main table.
+    const buckets: { name?: string; items: typeof yearData.items }[] = []
     for (const item of yearData.items) {
-      const description = [item.description, ...item.details.map(d => `– ${d}`)].join("\n")
-      const amount = item.cancelled ? 0 : item.totalAmount
-      total += amount
-      equipAoa.push([
-        item.no,
-        item.cancelled ? `(ยกเลิก) ${description}` : description,
-        item.qty,
-        item.unit,
-        item.unitPrice,
-        amount,
-        item.priceSource,
-        item.paymentNote,
-      ])
+      let bucket = buckets.find(b => b.name === item.group)
+      if (!bucket) { bucket = { name: item.group, items: [] }; buckets.push(bucket) }
+      bucket.items.push(item)
     }
-    equipAoa.push(["", "", "", "", "รวมทั้งสิ้น", total, "", `${yearData.items.length} รายการ`])
-    equipAoa.push([])
+
+    let grandTotal = 0
+    for (const bucket of buckets) {
+      equipAoa.push([bucket.name ?? DEFAULT_EQUIPMENT_GROUP])
+      equipAoa.push(["#", "รายการ", "จำนวน", "หน่วย", "ราคา/หน่วย", "รวม", "แหล่งราคา", "กำหนดจ่าย"])
+      let subtotal = 0
+      for (const item of bucket.items) {
+        const description = [item.description, ...item.details.map(d => `– ${d}`)].join("\n")
+        const amount = item.cancelled ? 0 : item.totalAmount
+        subtotal += amount
+        equipAoa.push([
+          item.no,
+          item.cancelled ? `(ยกเลิก) ${description}` : description,
+          item.qty,
+          item.unit,
+          item.unitPrice,
+          toBaht(amount),
+          item.priceSource,
+          item.paymentNote,
+        ])
+      }
+      grandTotal += subtotal
+      equipAoa.push(["", "", "", "", buckets.length > 1 ? "รวมย่อย" : "รวมทั้งสิ้น", toBaht(subtotal), "", `${bucket.items.length} รายการ`])
+      equipAoa.push([])
+    }
+    if (buckets.length > 1) {
+      equipAoa.push(["", "", "", "", "รวมทั้งสิ้นทุกตาราง", toBaht(grandTotal), "", `${yearData.items.length} รายการ`])
+      equipAoa.push([])
+    }
   }
 
   const equipSheet = XLSX.utils.aoa_to_sheet(equipAoa)
@@ -140,7 +165,7 @@ export async function exportReportExcel(report: Report) {
         activity.name,
         ...activity.months.map(m => {
           if (!m.active) return ""
-          return m.amount != null ? `${(m.amount / 1_000_000).toFixed(1)} ล.` : "✓"
+          return m.amount != null ? toBaht(m.amount) : "✓"
         }),
       ])
     }

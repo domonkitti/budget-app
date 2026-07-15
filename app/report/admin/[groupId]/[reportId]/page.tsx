@@ -2,20 +2,36 @@
 
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { MOCK_REPORTS } from '@/lib/reportMock'
-import type { Preset } from '@/lib/reportTypes'
+import { reportApi } from '@/lib/reportApi'
+import type { Preset, Report } from '@/lib/reportTypes'
 import { exportReportPdf } from '@/lib/exportReportPdf'
 
 const ReportView = dynamic(() => import('@/components/report/ReportView'), { ssr: false })
 
 export default function ReportAdminViewPage() {
   const { reportId, groupId } = useParams<{ groupId: string; reportId: string }>()
-  const report = MOCK_REPORTS.find(r => r.id === reportId)
+  const [report, setReport] = useState<Report | null>(null)
+  const [loading, setLoading] = useState(true)
   const [savedPresets, setSavedPresets] = useState<Preset[]>([])
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+
+  useEffect(() => {
+    reportApi.report(reportId)
+      .then(setReport)
+      .catch(() => setReport(null))
+      .finally(() => setLoading(false))
+  }, [reportId])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">กำลังโหลด...</p>
+      </div>
+    )
+  }
 
   if (!report) {
     return (
@@ -51,12 +67,6 @@ export default function ReportAdminViewPage() {
             </svg>
             {exporting ? 'กำลังสร้าง PDF...' : 'ส่งออก PDF'}
           </button>
-          <Link
-            href={`/report/${groupId}/${reportId}`}
-            className="text-xs text-gray-400 hover:text-indigo-600 border border-gray-200 rounded px-2 py-1"
-          >
-            ดูแบบ Boss
-          </Link>
         </div>
       </div>
       {exportError && (
@@ -69,6 +79,7 @@ export default function ReportAdminViewPage() {
         isAdmin={true}
         savedPresets={savedPresets}
         onSavePreset={p => setSavedPresets(ps => [...ps, p])}
+        onDataChange={data => reportApi.updateReportData(reportId, data)}
       />
     </>
   )

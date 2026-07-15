@@ -20,8 +20,8 @@ const BASIC_FIELDS = [
 
 export default function BasicInfoSection({ basicInfo: bi, isAdmin, hiddenFields, onToggleField, onChange }: Props) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-gray-200 bg-gray-100 flex items-center justify-between shrink-0">
         <p className="text-sm font-bold text-gray-700">ข้อมูลพื้นฐาน (004/1)</p>
         {isAdmin && <FieldMenu fields={BASIC_FIELDS} hiddenFields={hiddenFields} onToggle={onToggleField} />}
       </div>
@@ -46,6 +46,7 @@ export default function BasicInfoSection({ basicInfo: bi, isAdmin, hiddenFields,
 
         <Field fieldKey="area" label="พื้นที่/ระยะเวลา" isAdmin={isAdmin} hiddenFields={hiddenFields} onToggle={onToggleField}>
           <div className="space-y-2">
+            <Row label="ลักษณะงาน" value={bi.workNature} isAdmin={isAdmin} onSave={v => onChange?.({ workNature: v })} />
             <Row label="พื้นที่" value={bi.area} isAdmin={isAdmin} onSave={v => onChange?.({ area: v })} />
             <Row label="ระยะเวลา" value={`${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`} />
           </div>

@@ -3,11 +3,11 @@ import { chromium, type Page } from "playwright"
 
 export const runtime = "nodejs"
 
-// PowerPoint widescreen slide size at 96 CSS px/inch — must match SLIDE_WIDTH_PX/
+// A4 landscape page at 96 CSS px/inch (297mm x 210mm) — must match SLIDE_WIDTH_PX/
 // SLIDE_HEIGHT_PX in components/report/ReportView.tsx, since each .page-card-body
 // is captured at its live on-screen size and dropped onto exactly one PDF page.
-const SLIDE_WIDTH_PX = 1280
-const SLIDE_HEIGHT_PX = 720
+const SLIDE_WIDTH_PX = 1123
+const SLIDE_HEIGHT_PX = 794
 
 async function captureSlides(page: Page): Promise<Buffer[]> {
   const boxes = await page.$$eval(".page-card-body", (els) =>

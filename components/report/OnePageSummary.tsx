@@ -1,7 +1,7 @@
 'use client'
 
-import type { Report } from '@/lib/reportTypes'
-import { fmtMillion, fmtNumber, THAI_MONTHS, ACTIVE_YEAR } from '@/lib/reportTypes'
+import type { EquipmentItem, Report } from '@/lib/reportTypes'
+import { fmtMillion, fmtNumber, THAI_MONTHS, ACTIVE_YEAR, DEFAULT_EQUIPMENT_GROUP } from '@/lib/reportTypes'
 
 interface Props {
   report: Report
@@ -26,22 +26,25 @@ export default function OnePageSummary({ report }: Props) {
   return (
     <div className="mx-auto max-w-5xl bg-white text-gray-900 p-10 print:p-0 print:max-w-none">
       {/* Header */}
-      <div className="border-b-2 border-gray-900 pb-4 mb-5">
-        <h1 className="text-xl font-bold leading-snug">{data.projectName}</h1>
-        <div className="flex items-center gap-2 mt-1.5 flex-wrap text-sm text-gray-500">
-          <span>{data.dept}</span>
-          <span className="text-gray-300">·</span>
-          <span>{data.section}</span>
-          <span className="text-gray-300">·</span>
-          <span>ปีงบประมาณ {data.fiscalYear}</span>
-          <span
-            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              data.status === 'ต่อเนื่อง' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-            }`}
-          >
-            {data.status}
-          </span>
+      <div className="border-b-2 border-gray-900 pb-4 mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold leading-snug">{data.projectName}</h1>
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap text-sm text-gray-500">
+            <span>{data.dept}</span>
+            <span className="text-gray-300">·</span>
+            <span>{data.section}</span>
+            <span className="text-gray-300">·</span>
+            <span>ปีงบประมาณ {data.fiscalYear}</span>
+            <span
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                data.status === 'ต่อเนื่อง' ? 'bg-blue-50 text-blue-700 ring-1 ring-blue-200' : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+              }`}
+            >
+              {data.status}
+            </span>
+          </div>
         </div>
+        <span className="text-[10px] text-gray-400 shrink-0 mt-1">หน่วย : ล้านบาท</span>
       </div>
 
       {/* KPI row */}
@@ -76,39 +79,88 @@ export default function OnePageSummary({ report }: Props) {
         </div>
       </div>
 
-      {/* Equipment — active year snapshot, ranked by near-term disbursement */}
-      {equipmentYear && equipmentYear.items.length > 0 && (
-        <div className="mb-5">
-          <SectionLabel>{`วัสดุอุปกรณ์หลัก ปี ${equipmentYear.year} (${equipmentYear.items.length} รายการ)`}</SectionLabel>
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-1 font-semibold text-gray-500 text-xs w-56">รายการ</th>
-                <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">จำนวน/วงเงิน</th>
-                <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">ประมาณจ่าย ปี {activeYear}</th>
-                <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">ประมาณจ่าย ปี {nextYear}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {[...equipmentYear.items]
-                .filter(it => !it.cancelled)
-                .sort((a, b) => (disbursementFor(b, activeYear) + disbursementFor(b, nextYear)) - (disbursementFor(a, activeYear) + disbursementFor(a, nextYear)))
-                .slice(0, 4)
-                .map(it => (
-                  <tr key={it.no}>
-                    <td className="py-1 pr-2 text-gray-700 break-words">{it.description}</td>
-                    <td className="py-1 text-right text-gray-600">
-                      <div className="font-mono">{fmtMillion(it.totalAmount)}</div>
-                      <div className="text-gray-400">{fmtNumber(it.qty)} {it.unit}</div>
-                    </td>
-                    <td className="py-1 text-right font-mono text-gray-600">{fmtMillion(disbursementFor(it, activeYear))}</td>
-                    <td className="py-1 text-right font-mono text-gray-600">{fmtMillion(disbursementFor(it, nextYear))}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Equipment — active year snapshot, full list, ranked by near-term disbursement */}
+      {equipmentYear && equipmentYear.items.length > 0 && (() => {
+        // Group items into their own table when tagged (e.g. ค่าใช้จ่ายหน้างาน/ค่าจ้าง);
+        // untagged items form the main table, preserving the original single-table look.
+        const buckets: { name?: string; items: EquipmentItem[] }[] = []
+        for (const it of equipmentYear.items) {
+          let bucket = buckets.find(b => b.name === it.group)
+          if (!bucket) { bucket = { name: it.group, items: [] }; buckets.push(bucket) }
+          bucket.items.push(it)
+        }
+        return (
+          <div className="mb-5">
+            <SectionLabel>{`วัสดุอุปกรณ์หลัก ปี ${equipmentYear.year} (${equipmentYear.items.length} รายการ)`}</SectionLabel>
+            <div className="space-y-3">
+              {buckets.map(bucket => {
+                const shown = [...bucket.items]
+                  .filter(it => !it.cancelled)
+                  .sort((a, b) => (disbursementFor(b, activeYear) + disbursementFor(b, nextYear)) - (disbursementFor(a, activeYear) + disbursementFor(a, nextYear)))
+                return (
+                  <div key={bucket.name ?? '__main'}>
+                    {buckets.length > 1 && (
+                      <p className="text-xs font-semibold text-gray-500 mb-1">{bucket.name ?? DEFAULT_EQUIPMENT_GROUP} ({bucket.items.length} รายการ)</p>
+                    )}
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="text-left py-1 font-semibold text-gray-500 text-xs w-56">รายการ</th>
+                          <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">จำนวน/วงเงิน</th>
+                          <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">ประมาณจ่าย ปี {activeYear}</th>
+                          <th className="text-right py-1 font-semibold text-gray-500 text-xs w-28">ประมาณจ่าย ปี {nextYear}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {shown.map(it => (
+                          <tr key={it.no}>
+                            <td className="py-1 pr-2 text-gray-700 break-words">{it.description}</td>
+                            <td className="py-1 text-right text-gray-600">
+                              <div className="font-mono">{fmtMillion(it.totalAmount)}</div>
+                              <div className="text-gray-400">{fmtNumber(it.qty)} {it.unit}</div>
+                            </td>
+                            <td className="py-1 text-right font-mono text-gray-600">{fmtMillion(disbursementFor(it, activeYear))}</td>
+                            <td className="py-1 text-right font-mono text-gray-600">{fmtMillion(disbursementFor(it, nextYear))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-gray-300 font-semibold">
+                          <td className="py-1 pr-2 text-gray-700">รวม</td>
+                          <td className="py-1 text-right font-mono text-gray-900">
+                            {fmtMillion(shown.reduce((s, it) => s + it.totalAmount, 0))}
+                          </td>
+                          <td className="py-1 text-right font-mono text-gray-900">
+                            {fmtMillion(shown.reduce((s, it) => s + disbursementFor(it, activeYear), 0))}
+                          </td>
+                          <td className="py-1 text-right font-mono text-gray-900">
+                            {fmtMillion(shown.reduce((s, it) => s + disbursementFor(it, nextYear), 0))}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )
+              })}
+            </div>
+            {buckets.length > 1 && (() => {
+              const all = equipmentYear.items.filter(it => !it.cancelled)
+              return (
+                <table className="w-full text-sm border-collapse mt-2">
+                  <tbody>
+                    <tr className="border-t-2 border-gray-900 font-bold text-gray-900">
+                      <td className="py-1.5 pr-2 w-56">รวมทั้งสิ้นทุกตาราง</td>
+                      <td className="py-1.5 text-right font-mono w-28">{fmtMillion(all.reduce((s, it) => s + it.totalAmount, 0))}</td>
+                      <td className="py-1.5 text-right font-mono w-28">{fmtMillion(all.reduce((s, it) => s + disbursementFor(it, activeYear), 0))}</td>
+                      <td className="py-1.5 text-right font-mono w-28">{fmtMillion(all.reduce((s, it) => s + disbursementFor(it, nextYear), 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )
+            })()}
+          </div>
+        )
+      })()}
 
       {/* Procurement timeline — one stacked strip per fiscal year covered */}
       {procurementPlans.length > 0 && (

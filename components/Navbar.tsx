@@ -116,6 +116,8 @@ export default function Navbar() {
     { href: "/category", label: "Category" },
     { href: "/compare", label: "Compare" },
     { href: "/projects", label: "Projects" },
+    { href: "/report", label: "Report" },
+    { href: "/onepage/g1/r1", label: "Summary" },
     { href: "/admin", label: "Admin" },
   ]
 
@@ -165,7 +167,9 @@ export default function Navbar() {
 
         {navLinks.map((l) => {
           const active = path === l.href ||
-            (l.href === "/projects" && (path.startsWith("/projects") || path.startsWith("/import")))
+            (l.href === "/projects" && (path.startsWith("/projects") || path.startsWith("/import"))) ||
+            (l.href === "/report" && path.startsWith("/report")) ||
+            (l.href === "/onepage/g1/r1" && path.startsWith("/onepage"))
           return (
             <Link
               key={l.href}

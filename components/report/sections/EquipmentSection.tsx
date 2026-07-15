@@ -1,7 +1,9 @@
 'use client'
 
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import type { EquipmentYear, EquipmentItem } from '@/lib/reportTypes'
-import { fmtNumber, fmtMillion, YEAR_CHOICES } from '@/lib/reportTypes'
+import { fmtNumber, fmtMillion, YEAR_CHOICES, DEFAULT_EQUIPMENT_GROUP } from '@/lib/reportTypes'
+import NumberInput from '@/components/report/NumberInput'
 
 interface Props {
   data: EquipmentYear[]
@@ -13,14 +15,71 @@ interface Props {
   rowStart?: number
   rowEnd?: number
   isContinuation?: boolean
+  // Names which page this continuation was split off from (e.g. "ต่อจากหน้า 4").
+  // Falls back to a plain "(ต่อ)" label when the source page can't be resolved.
+  continuationLabel?: string
+  // When on, measures its own rendered rows against the visible box on every render and reports
+  // the last row index that actually fit — the parent uses that to push overflow rows onto a
+  // continuation page. Only meaningful while the card sits in a fixed-height admin page slot.
+  autoSplit?: boolean
+  onMeasureOverflow?: (lastFitAbsoluteIndex: number, totalRows: number) => void
 }
 
-export default function EquipmentSection({ data, isAdmin, onChange, activeYear, onActiveYearChange, rowStart, rowEnd, isContinuation }: Props) {
+export default function EquipmentSection({ data, isAdmin, onChange, activeYear, onActiveYearChange, rowStart, rowEnd, isContinuation, continuationLabel, autoSplit, onMeasureOverflow }: Props) {
+  const disbursementFor = (it: EquipmentItem, year: number) => it.disbursementByYear.find(d => d.year === year)?.amount ?? 0
   const yearIdx = data.findIndex(d => d.year === activeYear)
   const yearData = data[yearIdx]
   const allItems = yearData?.items ?? []
   const visibleItems = rowStart != null || rowEnd != null ? allItems.slice(rowStart ?? 0, rowEnd ?? allItems.length) : allItems
   const total = visibleItems.reduce((s, item) => s + (item.cancelled ? 0 : item.totalAmount), 0)
+  const totalDisbursement = (year: number) => visibleItems.reduce((s, item) => s + (item.cancelled ? 0 : disbursementFor(item, year)), 0)
+
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
+
+  // Runs after every render (no dep array) so it stays live as rows are added/edited/removed.
+  // Purely reads layout and calls back up — never touches local state, so it can't loop on itself.
+  useLayoutEffect(() => {
+    if (!autoSplit || !onMeasureOverflow || !scrollRef.current || !tbodyRef.current) return
+    const containerH = scrollRef.current.clientHeight
+    const rows = tbodyRef.current.querySelectorAll<HTMLElement>('tr[data-row-i]')
+    if (rows.length === 0) return
+    let lastFitIdx = -1
+    for (const row of rows) {
+      const bottom = row.offsetTop + row.offsetHeight
+      if (bottom <= containerH) lastFitIdx = Number(row.dataset.rowI)
+      else break
+    }
+    onMeasureOverflow(lastFitIdx, allItems.length)
+  })
+
+  // ประมาณจ่าย columns are whatever years actually exist in the item data — admin adds/removes freely.
+  const disbYears = Array.from(new Set(allItems.flatMap(it => it.disbursementByYear.map(d => d.year)))).sort((a, b) => a - b)
+
+  function addDisbYear() {
+    if (!onChange || yearIdx < 0) return
+    const nextYr = disbYears.length ? Math.max(...disbYears) + 1 : activeYear
+    const next = [...data]
+    next[yearIdx] = {
+      ...next[yearIdx],
+      items: next[yearIdx].items.map(it => (
+        it.disbursementByYear.some(d => d.year === nextYr)
+          ? it
+          : { ...it, disbursementByYear: [...it.disbursementByYear, { year: nextYr, amount: 0 }] }
+      )),
+    }
+    onChange(next)
+  }
+
+  function removeDisbYear(year: number) {
+    if (!onChange || yearIdx < 0) return
+    const next = [...data]
+    next[yearIdx] = {
+      ...next[yearIdx],
+      items: next[yearIdx].items.map(it => ({ ...it, disbursementByYear: it.disbursementByYear.filter(d => d.year !== year) })),
+    }
+    onChange(next)
+  }
 
   function addYear(year: number) {
     if (!onChange || data.some(d => d.year === year)) return
@@ -36,15 +95,26 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
     if (activeYear === year) onActiveYearChange(next[0]?.year ?? 0)
   }
 
+  function patchItemYear(itemIdx: number, year: number, amount: number) {
+    if (!onChange || yearIdx < 0) return
+    const next = [...data]
+    const items = [...next[yearIdx].items]
+    const item = items[itemIdx]
+    const byYear = item.disbursementByYear.some(d => d.year === year)
+      ? item.disbursementByYear.map(d => d.year === year ? { ...d, amount } : d)
+      : [...item.disbursementByYear, { year, amount }]
+    items[itemIdx] = { ...item, disbursementByYear: byYear }
+    next[yearIdx] = { ...next[yearIdx], items }
+    onChange(next)
+  }
+
+  // วงเงิน is entered independently, not qty × unitPrice — the allocated budget can run
+  // higher than the raw calculation since they want to spare some as buffer.
   function patchItem(itemIdx: number, patch: Partial<EquipmentItem>) {
     if (!onChange || yearIdx < 0) return
     const next = [...data]
     const items = [...next[yearIdx].items]
-    const updated = { ...items[itemIdx], ...patch }
-    if ('qty' in patch || 'unitPrice' in patch) {
-      updated.totalAmount = updated.qty * updated.unitPrice
-    }
-    items[itemIdx] = updated
+    items[itemIdx] = { ...items[itemIdx], ...patch }
     next[yearIdx] = { ...next[yearIdx], items }
     onChange(next)
   }
@@ -56,7 +126,7 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
     onChange(next)
   }
 
-  function addItem() {
+  function addItem(group?: string) {
     if (!onChange || yearIdx < 0) return
     const next = [...data]
     const items = next[yearIdx].items
@@ -72,83 +142,161 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
       totalAmount: 0,
       disbursementByYear: [],
       paymentNote: '',
+      ...(group ? { group } : {}),
     }
     next[yearIdx] = { ...next[yearIdx], items: [...items, newItem] }
     onChange(next)
   }
 
+  function renameGroup(oldName: string | undefined, newName: string) {
+    if (!onChange || yearIdx < 0 || !newName || oldName === newName) return
+    const next = [...data]
+    next[yearIdx] = { ...next[yearIdx], items: next[yearIdx].items.map(it => it.group === oldName ? { ...it, group: newName } : it) }
+    onChange(next)
+  }
+
+  function deleteGroup(name: string | undefined) {
+    if (!onChange || yearIdx < 0) return
+    const next = [...data]
+    next[yearIdx] = { ...next[yearIdx], items: next[yearIdx].items.filter(it => it.group !== name) }
+    onChange(next)
+  }
+
+  // Bucket visible items by group, preserving order of first appearance. Undefined
+  // group (main "007" table) is always first so the default single-table look is unchanged.
+  const buckets: { name?: string; rows: { item: EquipmentItem; i: number }[] }[] = []
+  visibleItems.forEach((item, localI) => {
+    const i = (rowStart ?? 0) + localI
+    let bucket = buckets.find(b => b.name === item.group)
+    if (!bucket) { bucket = { name: item.group, rows: [] }; buckets.push(bucket) }
+    bucket.rows.push({ item, i })
+  })
+  const [newGroupName, setNewGroupName] = useState('')
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between flex-wrap gap-3 shrink-0">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-gray-200 bg-gray-100 flex items-center justify-between flex-wrap gap-3 shrink-0">
         <p className="text-sm font-bold text-gray-700">
-          รายการวัสดุอุปกรณ์ (007){isContinuation && <span className="text-gray-400 font-normal"> (ต่อ)</span>}
+          รายการวัสดุอุปกรณ์ (007){isContinuation && <span className="text-gray-400 font-normal"> ({continuationLabel ?? 'ต่อ'})</span>}
         </p>
-        {!isContinuation && (
-          <div className="flex items-center gap-1 flex-wrap">
-            {data.map(d => (
-              <span key={d.year} className="inline-flex items-center">
-                <button
-                  onClick={() => onActiveYearChange(d.year)}
-                  className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                    activeYear === d.year
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
-                  }`}
-                >
-                  ปี {d.year}
-                </button>
-                {isAdmin && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[10px] text-gray-400">หน่วย : ล้านบาท</span>
+          {!isContinuation && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {data.map(d => (
+                <span key={d.year} className="inline-flex items-center">
                   <button
-                    onClick={() => removeYear(d.year)}
-                    className="text-gray-300 hover:text-red-400 px-1"
-                    title="ลบปีนี้"
+                    onClick={() => onActiveYearChange(d.year)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                      activeYear === d.year
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+                    }`}
                   >
-                    ×
+                    ปี {d.year}
                   </button>
-                )}
-              </span>
-            ))}
-            {isAdmin && (
-              <select
-                value=""
-                onChange={e => e.target.value && addYear(Number(e.target.value))}
-                className="text-xs border border-dashed border-indigo-300 rounded-lg px-2 py-1 text-indigo-600 bg-transparent"
-              >
-                <option value="">+ เพิ่มปี</option>
-                {YEAR_CHOICES.filter(y => !data.some(d => d.year === y)).map(y => (
-                  <option key={y} value={y}>{y}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        )}
+                  {isAdmin && (
+                    <button
+                      onClick={() => removeYear(d.year)}
+                      className="text-gray-300 hover:text-red-400 px-1"
+                      title="ลบปีนี้"
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+              {isAdmin && (
+                <select
+                  value=""
+                  onChange={e => e.target.value && addYear(Number(e.target.value))}
+                  className="text-xs border border-dashed border-indigo-300 rounded-lg px-2 py-1 text-indigo-600 bg-transparent"
+                >
+                  <option value="">+ เพิ่มปี</option>
+                  {YEAR_CHOICES.filter(y => !data.some(d => d.year === y)).map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-auto pb-3">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-auto pb-3">
         {yearData && visibleItems.length > 0 ? (
           <>
-            <table className="w-full min-w-[700px] text-sm">
+            <table
+              className="w-full text-sm"
+              style={{ minWidth: `${520 + disbYears.length * 110}px` }}
+            >
               <thead className="sticky top-0 z-10">
                 <tr className="bg-white border-b border-gray-100">
                   <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 w-10">#</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400">รายการ</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400 w-20">จำนวน</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 w-16">หน่วย</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 w-32">ราคา/หน่วย</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-400 w-32">รวม</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 w-36">แหล่งราคา</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 w-32">กำหนดจ่าย</th>
-                  {isAdmin && <th className="w-10" />}
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 w-40">รายการ</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-400 w-28">
+                    <span className="flex justify-end w-full">จำนวน</span>
+                  </th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-400 w-32">
+                    <span className="flex justify-end w-full">วงเงินปี {activeYear}</span>
+                  </th>
+                  {disbYears.map(y => (
+                    <th key={y} className="text-right px-4 py-3 text-xs font-semibold text-gray-400 w-28">
+                      <span className="inline-flex items-center gap-1 justify-end w-full">
+                        ประมาณจ่าย ปี {y}
+                        {isAdmin && (
+                          <button
+                            onClick={() => removeDisbYear(y)}
+                            className="text-gray-300 hover:text-red-400"
+                            title="ลบปีนี้"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    </th>
+                  ))}
+                  {isAdmin && (
+                    <th className="w-10">
+                      <button
+                        onClick={addDisbYear}
+                        className="text-indigo-400 hover:text-indigo-600 font-bold text-sm"
+                        title="เพิ่มปีประมาณจ่าย"
+                      >
+                        +
+                      </button>
+                    </th>
+                  )}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {visibleItems.map((item, localI) => {
-                  const i = (rowStart ?? 0) + localI
-                  return (
-                  <tr key={item.no} className={`hover:bg-gray-50/50 ${item.cancelled ? 'opacity-40' : ''}`}>
-                    <td className="text-center px-4 py-3 text-gray-400 text-xs">{item.no}</td>
+              <tbody ref={tbodyRef} className="divide-y divide-gray-50">
+                {buckets.map(bucket => (
+                  <Fragment key={bucket.name ?? '__main'}>
+                    <tr className="bg-gray-50">
+                      <td colSpan={isAdmin ? 5 + disbYears.length : 4 + disbYears.length} className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          {isAdmin ? (
+                            <GroupNameEditor name={bucket.name ?? DEFAULT_EQUIPMENT_GROUP} onRename={n => renameGroup(bucket.name, n)} />
+                          ) : (
+                            <span className="text-xs font-semibold text-gray-500">{bucket.name ?? DEFAULT_EQUIPMENT_GROUP}</span>
+                          )}
+                          {isAdmin && buckets.length > 1 && (
+                            <button
+                              onClick={() => deleteGroup(bucket.name)}
+                              className="ml-auto text-xs text-gray-300 hover:text-red-400"
+                              title="ลบตารางนี้"
+                            >
+                              ลบตาราง ×
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {bucket.rows.map(({ item, i }) => (
+                  <tr key={item.no} data-row-i={i} className={`hover:bg-gray-50/50 ${item.cancelled ? 'opacity-40' : ''}`}>
+                    <td className="text-center px-4 py-3 text-gray-400 text-xs align-top">{item.no}</td>
 
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3 align-top">
                       {isAdmin ? (
                         <div className="space-y-1">
                           <input
@@ -197,70 +345,64 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
                       )}
                     </td>
 
-                    <td className="text-center px-4 py-3 font-mono text-gray-700">
+                    <td className="text-right px-4 py-3 font-mono text-gray-700 align-top">
                       {isAdmin ? (
-                        <input
-                          type="number"
-                          value={item.qty || ''}
-                          onChange={e => patchItem(i, { qty: Number(e.target.value) || 0 })}
-                          className="w-16 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-center font-mono"
-                        />
-                      ) : item.qty.toLocaleString()}
-                    </td>
-
-                    <td className="px-4 py-3 text-gray-500">
-                      {isAdmin ? (
-                        <input
-                          value={item.unit}
-                          onChange={e => patchItem(i, { unit: e.target.value })}
-                          className="w-14 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent"
-                        />
-                      ) : item.unit}
-                    </td>
-
-                    <td className="text-right px-4 py-3 font-mono text-gray-700">
-                      {isAdmin ? (
-                        <input
-                          type="number"
-                          value={item.unitPrice || ''}
-                          onChange={e => patchItem(i, { unitPrice: Number(e.target.value) || 0 })}
-                          className="w-28 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
-                        />
-                      ) : fmtNumber(item.unitPrice)}
-                    </td>
-
-                    <td className="text-right px-4 py-3 font-mono font-semibold text-gray-900">
-                      {item.cancelled
-                        ? <span className="text-gray-300 text-xs">(ยกเลิก)</span>
-                        : fmtMillion(item.totalAmount)}
-                    </td>
-
-                    <td className="px-4 py-3 text-xs text-gray-400 leading-relaxed">
-                      {isAdmin ? (
-                        <input
-                          value={item.priceSource}
-                          onChange={e => patchItem(i, { priceSource: e.target.value })}
-                          className="w-full border-b border-gray-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent"
-                        />
-                      ) : item.priceSource}
-                    </td>
-
-                    <td className="px-4 py-3">
-                      {isAdmin ? (
-                        <input
-                          value={item.paymentNote}
-                          onChange={e => patchItem(i, { paymentNote: e.target.value })}
-                          className="w-full border-b border-indigo-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent text-indigo-600"
-                        />
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1 justify-end">
+                            <NumberInput
+                              value={item.qty}
+                              onChange={v => patchItem(i, { qty: v })}
+                              className="w-14 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
+                            />
+                            <input
+                              value={item.unit}
+                              onChange={e => patchItem(i, { unit: e.target.value })}
+                              className="w-12 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-gray-500"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1 justify-end text-gray-400">
+                            <span className="text-xs">@</span>
+                            <NumberInput
+                              value={item.unitPrice}
+                              onChange={v => patchItem(i, { unitPrice: v })}
+                              className="w-24 border-b border-gray-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent text-right font-mono"
+                            />
+                          </div>
+                        </div>
                       ) : (
-                        <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium">
-                          {item.paymentNote}
-                        </span>
+                        <div>
+                          <div>{item.qty.toLocaleString()} {item.unit}</div>
+                          <div className="text-gray-400 text-xs">@{fmtNumber(item.unitPrice)}</div>
+                        </div>
                       )}
                     </td>
 
+                    <td className="text-right px-4 py-3 font-mono font-semibold text-gray-900 align-top">
+                      {item.cancelled ? (
+                        <span className="text-gray-300 text-xs">(ยกเลิก)</span>
+                      ) : isAdmin ? (
+                        <NumberInput
+                          value={item.totalAmount}
+                          onChange={v => patchItem(i, { totalAmount: v })}
+                          className="w-24 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono font-semibold"
+                        />
+                      ) : fmtMillion(item.totalAmount)}
+                    </td>
+
+                    {disbYears.map(y => (
+                      <td key={y} className="text-right px-4 py-3 font-mono text-gray-600 align-top">
+                        {isAdmin ? (
+                          <NumberInput
+                            value={disbursementFor(item, y)}
+                            onChange={v => patchItemYear(i, y, v)}
+                            className="w-24 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
+                          />
+                        ) : fmtMillion(disbursementFor(item, y))}
+                      </td>
+                    ))}
+
                     {isAdmin && (
-                      <td className="py-3 px-2">
+                      <td className="py-3 px-2 align-top">
                         <div className="flex flex-col gap-1.5 items-center">
                           <button
                             onClick={() => patchItem(i, { cancelled: !item.cancelled })}
@@ -286,28 +428,76 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
                       </td>
                     )}
                   </tr>
-                  )
-                })}
+                    ))}
+                    {buckets.length > 1 && isAdmin && rowEnd == null && (
+                      <tr>
+                        <td colSpan={isAdmin ? 5 + disbYears.length : 4 + disbYears.length} className="px-4 py-2">
+                          <button
+                            onClick={() => addItem(bucket.name)}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors"
+                          >
+                            + เพิ่มรายการ
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                    {buckets.length > 1 && (
+                      <tr className="bg-gray-50/70">
+                        <td colSpan={3} className="px-4 py-2 text-right text-xs font-semibold text-gray-500">
+                          รวมย่อย ({bucket.rows.length} รายการ)
+                        </td>
+                        <td className="text-right px-4 py-2 font-bold font-mono text-gray-900 text-sm">
+                          {fmtMillion(bucket.rows.reduce((s, r) => s + (r.item.cancelled ? 0 : r.item.totalAmount), 0))}
+                        </td>
+                        {disbYears.map(y => (
+                          <td key={y} className="text-right px-4 py-2 font-mono text-gray-500 text-xs">
+                            {fmtMillion(bucket.rows.reduce((s, r) => s + (r.item.cancelled ? 0 : disbursementFor(r.item, y)), 0))}
+                          </td>
+                        ))}
+                        {isAdmin && <td />}
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
-                  <td colSpan={5} className="px-4 py-3 text-right text-xs font-semibold text-gray-500">
-                    {isContinuation || rowEnd != null ? 'รวมย่อย' : 'รวมทั้งสิ้น'}
+                  <td colSpan={3} className="px-4 py-3 text-right text-xs font-semibold text-gray-500">
+                    {isContinuation || rowEnd != null ? 'รวมย่อย' : 'รวมทั้งสิ้น'} ({visibleItems.length} รายการ)
                   </td>
                   <td className="text-right px-4 py-3 font-bold font-mono text-gray-900">{fmtMillion(total)}</td>
-                  <td colSpan={isAdmin ? 3 : 2} className="px-4 py-3 text-xs text-gray-400">{visibleItems.length} รายการ</td>
+                  {disbYears.map(y => (
+                    <td key={y} className="text-right px-4 py-3 font-bold font-mono text-gray-900">{fmtMillion(totalDisbursement(y))}</td>
+                  ))}
+                  {isAdmin && <td />}
                 </tr>
               </tfoot>
             </table>
 
             {isAdmin && rowEnd == null && (
-              <div className="px-4 py-3 border-t border-gray-50">
-                <button
-                  onClick={addItem}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors"
-                >
-                  + เพิ่มรายการ
-                </button>
+              <div className="px-4 py-3 border-t border-gray-50 flex items-center gap-3 flex-wrap">
+                {buckets.length === 1 && (
+                  <button
+                    onClick={() => addItem()}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    + เพิ่มรายการ
+                  </button>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={newGroupName}
+                    onChange={e => setNewGroupName(e.target.value)}
+                    placeholder="ชื่อตารางใหม่ เช่น ค่าใช้จ่ายหน้างาน/ค่าจ้าง"
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-64 outline-none focus:border-indigo-400"
+                  />
+                  <button
+                    onClick={() => { if (newGroupName.trim()) { addItem(newGroupName.trim()); setNewGroupName('') } }}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap"
+                  >
+                    + ตารางย่อยใหม่
+                  </button>
+                </div>
               </div>
             )}
           </>
@@ -318,7 +508,7 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
             </p>
             {isAdmin && yearData && rowEnd == null && (
               <button
-                onClick={addItem}
+                onClick={() => addItem()}
                 className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors"
               >
                 + เพิ่มรายการ
@@ -328,5 +518,34 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
         )}
       </div>
     </div>
+  )
+}
+
+function GroupNameEditor({ name, onRename }: { name: string; onRename: (n: string) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { if (draft.trim()) onRename(draft.trim()); setEditing(false) }}
+        onKeyDown={e => {
+          if (e.key === 'Enter') { if (draft.trim()) onRename(draft.trim()); setEditing(false) }
+          if (e.key === 'Escape') { setDraft(name); setEditing(false) }
+        }}
+        className="text-xs font-semibold text-gray-700 border-b border-indigo-300 outline-none bg-transparent"
+      />
+    )
+  }
+  return (
+    <span
+      onClick={() => { setDraft(name); setEditing(true) }}
+      className="text-xs font-semibold text-gray-500 cursor-text hover:text-indigo-600"
+      title="คลิกเพื่อแก้ไขชื่อตาราง"
+    >
+      {name}
+    </span>
   )
 }

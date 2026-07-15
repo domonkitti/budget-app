@@ -24,8 +24,8 @@ const BENEFIT_FIELDS = [
 
 export default function BenefitsSection({ benefits: ben, isAdmin, hiddenFields, onToggleField, onChange }: Props) {
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-gray-200 bg-gray-100 flex items-center justify-between shrink-0">
         <p className="text-sm font-bold text-gray-700">ผลประโยชน์และผลกระทบ (004/2)</p>
         {isAdmin && <FieldMenu fields={BENEFIT_FIELDS} hiddenFields={hiddenFields} onToggle={onToggleField} />}
       </div>

@@ -1,7 +1,14 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import type { ReportData } from '@/lib/reportTypes'
-import { fmtMillion } from '@/lib/reportTypes'
+import { fmtMillion, ACTIVE_YEAR } from '@/lib/reportTypes'
+import NumberInput from '@/components/report/NumberInput'
+
+// This report is either a mid-year "เปลี่ยนแปลงงบ" (budget amendment, filed against last year)
+// or the regular "งบประจำปี" (annual budget, filed against the current year).
+const AMENDMENT_YEAR = ACTIVE_YEAR - 1
+const ANNUAL_YEAR = ACTIVE_YEAR
 
 interface Props {
   data: ReportData
@@ -12,9 +19,13 @@ interface Props {
 export default function HeaderSection({ data, isAdmin, onChange }: Props) {
   const bi = data.basicInfo
 
+  function patchBasicInfo(patch: Partial<ReportData['basicInfo']>) {
+    onChange?.({ basicInfo: { ...bi, ...patch } })
+  }
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
-      <div className="px-8 py-6 border-b border-gray-100 shrink-0">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
+      <div className="px-8 py-6 border-b border-gray-200 shrink-0">
         {isAdmin ? (
           <textarea
             className="w-full text-xl font-bold text-gray-900 leading-snug resize-none border-0 outline-none focus:ring-2 focus:ring-indigo-200 rounded px-1 -mx-1 bg-transparent"
@@ -44,19 +55,64 @@ export default function HeaderSection({ data, isAdmin, onChange }: Props) {
       <div className="grid grid-cols-3 divide-x divide-gray-100">
         <KpiCard
           label="วงเงินทั้งสิ้น"
-          value={fmtMillion(bi.totalInvestment)}
-          sub={`${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`}
+          value={bi.totalInvestment}
+          onValueChange={isAdmin ? (v: number) => patchBasicInfo({ totalInvestment: v }) : undefined}
+          sub={
+            isAdmin ? (
+              <span className="inline-flex items-center gap-1">
+                <input
+                  type="number"
+                  value={bi.startYear}
+                  onChange={e => {
+                    const startYear = Number(e.target.value) || 0
+                    patchBasicInfo({ startYear, durationYears: Math.max(1, bi.endYear - startYear + 1) })
+                  }}
+                  className="w-12 bg-transparent border-b border-white/30 focus:border-white outline-none text-xs text-white"
+                />
+                <span>–</span>
+                <input
+                  type="number"
+                  value={bi.endYear}
+                  onChange={e => {
+                    const endYear = Number(e.target.value) || 0
+                    patchBasicInfo({ endYear, durationYears: Math.max(1, endYear - bi.startYear + 1) })
+                  }}
+                  className="w-12 bg-transparent border-b border-white/30 focus:border-white outline-none text-xs text-white"
+                />
+                <span>({bi.durationYears} ปี)</span>
+              </span>
+            ) : `${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`
+          }
           color="indigo"
         />
         <KpiCard
-          label={`วงเงินปี ${data.fiscalYear}`}
-          value={fmtMillion(bi.yearInvestment)}
+          label={
+            isAdmin ? (
+              <span className="inline-flex items-center gap-1">
+                วงเงินปี
+                <select
+                  value={data.fiscalYear}
+                  onChange={e => onChange?.({ fiscalYear: Number(e.target.value) })}
+                  className="border-b border-white/40 focus:border-white outline-none text-xs font-medium bg-transparent text-white"
+                >
+                  {![AMENDMENT_YEAR, ANNUAL_YEAR].includes(data.fiscalYear) && (
+                    <option value={data.fiscalYear} className="text-gray-900">{data.fiscalYear}</option>
+                  )}
+                  <option value={AMENDMENT_YEAR} className="text-gray-900">เปลี่ยนแปลงงบ ({AMENDMENT_YEAR})</option>
+                  <option value={ANNUAL_YEAR} className="text-gray-900">งบประจำปี ({ANNUAL_YEAR})</option>
+                </select>
+              </span>
+            ) : `วงเงินปี ${data.fiscalYear}`
+          }
+          value={bi.yearInvestment}
+          onValueChange={isAdmin ? (v: number) => patchBasicInfo({ yearInvestment: v }) : undefined}
           sub="ไม่รวม VAT"
           color="violet"
         />
         <KpiCard
           label="เป้าเบิกจ่าย"
-          value={fmtMillion(bi.disbursementTarget)}
+          value={bi.disbursementTarget}
+          onValueChange={isAdmin ? (v: number) => patchBasicInfo({ disbursementTarget: v }) : undefined}
           sub={`ปี ${data.fiscalYear}`}
           color="sky"
         />
@@ -65,10 +121,11 @@ export default function HeaderSection({ data, isAdmin, onChange }: Props) {
   )
 }
 
-function KpiCard({ label, value, sub, color }: {
-  label: string
-  value: string
-  sub: string
+function KpiCard({ label, value, onValueChange, sub, color }: {
+  label: ReactNode
+  value: number
+  onValueChange?: (v: number) => void
+  sub: ReactNode
   color: 'indigo' | 'violet' | 'sky'
 }) {
   const colors = {
@@ -79,7 +136,15 @@ function KpiCard({ label, value, sub, color }: {
   return (
     <div className={`${colors[color]} px-6 py-5 text-white`}>
       <p className="text-xs font-medium text-white/70 uppercase tracking-wide">{label}</p>
-      <p className="text-2xl font-bold mt-1 leading-tight">{value}</p>
+      {onValueChange ? (
+        <NumberInput
+          value={value}
+          onChange={onValueChange}
+          className="w-full bg-transparent text-2xl font-bold mt-1 leading-tight text-white border-b border-white/30 focus:border-white outline-none"
+        />
+      ) : (
+        <p className="text-2xl font-bold mt-1 leading-tight">{fmtMillion(value)}</p>
+      )}
       <p className="text-xs text-white/60 mt-0.5">{sub}</p>
     </div>
   )

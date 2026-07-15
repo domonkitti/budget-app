@@ -1,13 +1,31 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { MOCK_REPORTS } from '@/lib/reportMock'
+import { reportApi } from '@/lib/reportApi'
+import type { Report } from '@/lib/reportTypes'
 import OnePageSummary from '@/components/report/OnePageSummary'
 
 export default function OnePageSummaryPage() {
   const { groupId, reportId } = useParams<{ groupId: string; reportId: string }>()
-  const report = MOCK_REPORTS.find(r => r.id === reportId && r.groupId === groupId)
+  const [report, setReport] = useState<Report | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    reportApi.report(reportId)
+      .then(r => setReport(r.groupId === groupId ? r : null))
+      .catch(() => setReport(null))
+      .finally(() => setLoading(false))
+  }, [reportId, groupId])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">กำลังโหลด...</p>
+      </div>
+    )
+  }
 
   if (!report) {
     return (

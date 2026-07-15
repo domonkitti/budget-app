@@ -1,7 +1,8 @@
 'use client'
 
 import type { BudgetData, BudgetCategory } from '@/lib/reportTypes'
-import { fmtNumber, YEAR_CHOICES } from '@/lib/reportTypes'
+import { fmtMillion, YEAR_CHOICES } from '@/lib/reportTypes'
+import NumberInput from '@/components/report/NumberInput'
 
 interface Props {
   data: BudgetData
@@ -87,11 +88,12 @@ export default function BudgetSection({ data, fiscalYear, isAdmin, onChange, onF
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-full flex flex-col">
-      <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 shrink-0">
+    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
+      <div className="px-6 py-4 border-b border-gray-200 bg-gray-100 shrink-0 flex items-center justify-between">
         <p className="text-sm font-bold text-gray-700">
           งบประมาณที่ขอตั้งปี {fiscalYear} (004/4)
         </p>
+        <span className="text-[10px] text-gray-400">หน่วย : ล้านบาท</span>
       </div>
 
       <div className="flex-1 min-h-0 overflow-auto pb-3">
@@ -159,26 +161,24 @@ export default function BudgetSection({ data, fiscalYear, isAdmin, onChange, onF
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-gray-900 align-top">
                       {isAdmin ? (
-                        <input
-                          type="number"
-                          value={cat.yearAmount || ''}
-                          onChange={e => patchCategory(i, { yearAmount: Number(e.target.value) || 0 })}
+                        <NumberInput
+                          value={cat.yearAmount}
+                          onChange={v => patchCategory(i, { yearAmount: v })}
                           className="w-32 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
                         />
-                      ) : fmtNumber(cat.yearAmount)}
+                      ) : fmtMillion(cat.yearAmount)}
                     </td>
                     {years.map(y => {
                       const entry = cat.disbursementByYear.find(d => d.year === y)
                       return (
                         <td key={y} className="px-4 py-3 text-right font-mono text-gray-600 align-top">
                           {isAdmin ? (
-                            <input
-                              type="number"
-                              value={entry?.amount || ''}
-                              onChange={e => patchCategoryYear(i, y, Number(e.target.value) || 0)}
+                            <NumberInput
+                              value={entry?.amount ?? 0}
+                              onChange={v => patchCategoryYear(i, y, v)}
                               className="w-32 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
                             />
-                          ) : (entry?.amount ? fmtNumber(entry.amount) : '—')}
+                          ) : fmtMillion(entry?.amount ?? 0)}
                         </td>
                       )
                     })}
@@ -203,26 +203,24 @@ export default function BudgetSection({ data, fiscalYear, isAdmin, onChange, onF
                     <td className="px-6 py-3 text-gray-700">สำรองค่าปรับราคา</td>
                     <td className="px-4 py-3 text-right font-mono text-gray-900">
                       {isAdmin ? (
-                        <input
-                          type="number"
-                          value={data.reserve || ''}
-                          onChange={e => onChange?.({ ...data, reserve: Number(e.target.value) || 0 })}
+                        <NumberInput
+                          value={data.reserve}
+                          onChange={v => onChange?.({ ...data, reserve: v })}
                           className="w-32 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
                         />
-                      ) : fmtNumber(data.reserve)}
+                      ) : fmtMillion(data.reserve)}
                     </td>
                     {years.map(y => {
                       const entry = data.reserveByYear.find(d => d.year === y)
                       return (
                         <td key={y} className="px-4 py-3 text-right font-mono text-gray-600">
                           {isAdmin ? (
-                            <input
-                              type="number"
-                              value={entry?.amount || ''}
-                              onChange={e => patchReserveYear(y, Number(e.target.value) || 0)}
+                            <NumberInput
+                              value={entry?.amount ?? 0}
+                              onChange={v => patchReserveYear(y, v)}
                               className="w-32 border-b border-gray-200 focus:border-indigo-400 outline-none text-sm py-0.5 bg-transparent text-right font-mono"
                             />
-                          ) : (entry?.amount ? fmtNumber(entry.amount) : '—')}
+                          ) : fmtMillion(entry?.amount ?? 0)}
                         </td>
                       )
                     })}
@@ -233,7 +231,7 @@ export default function BudgetSection({ data, fiscalYear, isAdmin, onChange, onF
               <tfoot>
                 <tr className="border-t-2 border-gray-200 bg-gray-50">
                   <td className="px-6 py-3 font-semibold text-gray-900">รวมทั้งสิ้น</td>
-                  <td className="px-4 py-3 text-right font-semibold font-mono text-gray-900">{fmtNumber(totalYear)}</td>
+                  <td className="px-4 py-3 text-right font-semibold font-mono text-gray-900">{fmtMillion(totalYear)}</td>
                   {years.map(y => {
                     const total = data.categories.reduce((s, c) => {
                       const e = c.disbursementByYear.find(d => d.year === y)
@@ -241,7 +239,7 @@ export default function BudgetSection({ data, fiscalYear, isAdmin, onChange, onF
                     }, 0) + (data.reserveByYear.find(d => d.year === y)?.amount ?? 0)
                     return (
                       <td key={y} className="px-4 py-3 text-right font-semibold font-mono text-gray-900">
-                        {total ? fmtNumber(total) : '—'}
+                        {fmtMillion(total)}
                       </td>
                     )
                   })}

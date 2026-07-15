@@ -1,10 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { MOCK_REPORTS } from '@/lib/reportMock'
+import { reportApi } from '@/lib/reportApi'
+import type { Report } from '@/lib/reportTypes'
 import { exportReportPdf } from '@/lib/exportReportPdf'
 import { exportReportExcel } from '@/lib/exportReportExcel'
 
@@ -12,9 +13,25 @@ const ReportView = dynamic(() => import('@/components/report/ReportView'), { ssr
 
 export default function ReportViewPage() {
   const { groupId, reportId } = useParams<{ groupId: string; reportId: string }>()
-  const report = MOCK_REPORTS.find(r => r.id === reportId)
+  const [report, setReport] = useState<Report | null>(null)
+  const [loading, setLoading] = useState(true)
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+
+  useEffect(() => {
+    reportApi.report(reportId)
+      .then(setReport)
+      .catch(() => setReport(null))
+      .finally(() => setLoading(false))
+  }, [reportId])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <p className="text-gray-400 text-sm">กำลังโหลด...</p>
+      </div>
+    )
+  }
 
   if (!report) {
     return (

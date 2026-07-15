@@ -42,6 +42,7 @@ export interface BasicInfo {
   investmentType: InvestmentType
   status: ProjectStatus
   approval: string
+  workNature: string  // ลักษณะงาน
   area: string
   durationYears: number
   startYear: number
@@ -99,11 +100,14 @@ export interface EquipmentItem {
   disbursementByYear: { year: number; amount: number }[]
   paymentNote: string
   cancelled?: boolean
+  // Undefined = main วัสดุอุปกรณ์หลัก table. Set to split off a separate named
+  // table within the same year, e.g. "ค่าใช้จ่ายหน้างาน/ค่าจ้าง".
+  group?: string
 }
 
 export interface ProcurementPlan {
   fiscalYear: number
-  // each activity has 12 months: index 0 = ต.ค. (Oct), 11 = ก.ย. (Sep)
+  // each activity has 12 months: index 0 = ม.ค. (Jan), 11 = ธ.ค. (Dec)
   activities: ProcurementActivity[]
 }
 
@@ -128,9 +132,18 @@ export interface LayoutItem {
   minW?: number
   minH?: number
   page: number
-  // Row window for splittable list sections (currently only 'equipment'). Undefined rowEnd = through the last row.
+  // Row window for splittable list sections ('equipment' and 'procurement'). Undefined rowEnd = through the last row.
   rowStart?: number
   rowEnd?: number
+  // Fixed year for a duplicated 'equipment'/'procurement' card, independent of the shared
+  // active-year tabs — lets you print every year's 007/009 as separate cards instead of only
+  // whichever tab is selected.
+  pinnedYear?: number
+  // When true, this chain (this part plus any linked continuations) auto-splits itself onto a
+  // new page whenever its rendered rows overflow the page — shared across every part of the
+  // same chain so they all measure consistently. Off = today's default: content just scrolls
+  // inside the card.
+  autoSplit?: boolean
 }
 
 export interface Preset {
@@ -139,7 +152,6 @@ export interface Preset {
   sections: PresetSection[]
   layout: LayoutItem[]
   pages: number[]
-  pageHeights?: Record<number, number>
 }
 
 export interface PresetSection {
@@ -165,22 +177,28 @@ export const DEFAULT_PRESET: Preset = {
     { i: 'basicInfo',      x: 0, y: 0,  w: 6,  h: 10, minH: 6, minW: 3, page: 2 },
     { i: 'benefits',       x: 6, y: 0,  w: 6,  h: 10, minH: 4, minW: 3, page: 2 },
     { i: 'budget',         x: 0, y: 0,  w: 12, h: 6,  minH: 4, minW: 4, page: 3 },
-    { i: 'equipment',      x: 0, y: 0,  w: 12, h: 12, minH: 6, minW: 4, page: 4 },
+    { i: 'equipment',      x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 4, page: 4 },
     { i: 'procurement',    x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 6, page: 5 },
   ],
   pages: [1, 2, 3, 4, 5],
 }
 
-export const THAI_MONTHS = ['ต.ค.', 'พ.ย.', 'ธ.ค.', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.']
+// Display label for equipment items with no explicit group (the default/main 007 table).
+export const DEFAULT_EQUIPMENT_GROUP = 'วัสดุอุปกรณ์หลัก'
+
+export const THAI_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
 
 // TODO: replace with real current fiscal year from API/session once available
 export const ACTIVE_YEAR = 2570
 
 export const YEAR_CHOICES = Array.from({ length: 11 }, (_, i) => ACTIVE_YEAR - 5 + i)
 
+// Amounts are entered and stored directly in ล้านบาท (see each table's "หน่วย : ล้านบาท"
+// note) — no conversion here, just formatting. Exception: EquipmentSection's ราคา/หน่วย
+// (unitPrice) stays in raw บาท and uses fmtNumber instead.
 export function fmtMillion(n: number): string {
   if (!n) return '—'
-  return `${(n / 1_000_000).toFixed(2)} ล.`
+  return n.toLocaleString('th-TH', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 }
 
 export function fmtNumber(n: number): string {

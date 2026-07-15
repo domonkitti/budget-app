@@ -1,15 +1,28 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { ReportGroup, Report } from '@/lib/reportTypes'
-import { MOCK_GROUPS, MOCK_REPORTS } from '@/lib/reportMock'
+import { reportApi } from '@/lib/reportApi'
 import { fmtMillion } from '@/lib/reportTypes'
 
 export default function ReportListPage() {
-  const [groups] = useState<ReportGroup[]>(MOCK_GROUPS)
-  const [reports] = useState<Report[]>(MOCK_REPORTS)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set(groups.map(g => g.id)))
+  const [groups, setGroups] = useState<ReportGroup[]>([])
+  const [reports, setReports] = useState<Report[]>([])
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    Promise.all([reportApi.reportGroups(), reportApi.reports()])
+      .then(([g, r]) => {
+        setGroups(g)
+        setReports(r)
+        setExpanded(new Set(g.map(gr => gr.id)))
+      })
+      .catch(err => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false))
+  }, [])
 
   const toggle = (id: string) =>
     setExpanded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -33,6 +46,10 @@ export default function ReportListPage() {
           </Link>
         </div>
 
+        {loading && <p className="text-sm text-gray-400">กำลังโหลด...</p>}
+        {error && <p className="text-sm text-red-500">โหลดข้อมูลไม่สำเร็จ: {error}</p>}
+
+        {!loading && !error && (
         <div className="space-y-4">
           {groups.sort((a, b) => a.order - b.order).map(group => {
             const groupReports = reports.filter(r => r.groupId === group.id)
@@ -97,6 +114,7 @@ export default function ReportListPage() {
             )
           })}
         </div>
+        )}
       </div>
     </div>
   )
