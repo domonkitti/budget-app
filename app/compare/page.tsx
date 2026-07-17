@@ -11,7 +11,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core"
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts"
 import { api } from "@/lib/api"
 import type { FlatProject, Snapshot, SourceYearEntry } from "@/lib/types"
@@ -53,27 +53,41 @@ function sumEntries(entries: SourceYearEntry[], year?: number) {
 
 type CompiledGroup = { label: string; displayLabel: string; ids: string[]; entries: SourceYearEntry[] }
 
-function buildGroups(mode: Mode, groups: string[][], projects: FlatProject[]): CompiledGroup[] {
-  return groups.map(ids => {
+// Group items carry their source tagged onto the id ("<id>::<source>") so the
+// same project/department can be compared against a different snapshot/live
+// version across groups. Untagged ids (old saved URLs) default to "live".
+const TAG_SEP = "::"
+function tagId(id: string, source: string): string {
+  return `${id}${TAG_SEP}${source}`
+}
+function parseTaggedId(tagged: string): { id: string; source: string } {
+  const i = tagged.lastIndexOf(TAG_SEP)
+  if (i === -1) return { id: tagged, source: "live" }
+  return { id: tagged.slice(0, i), source: tagged.slice(i + TAG_SEP.length) }
+}
+
+function buildGroups(mode: Mode, groups: string[][], sourcesCache: Record<string, FlatProject[]>): CompiledGroup[] {
+  return groups.map(tagged => {
+    const parsed = tagged.map(parseTaggedId)
     if (mode === "project") {
-      const matched = ids.flatMap(id => {
-        const p = projects.find(x => x.project_code === id)
+      const matched = parsed.flatMap(({ id, source }) => {
+        const p = (sourcesCache[source] ?? []).find(x => x.project_code === id)
         return p ? [p] : []
       })
       return {
-        label: ids.join(" + "),
-        displayLabel: matched.map(p => p.name).join(", ") || ids.join(", "),
-        ids,
+        label: tagged.join(" + "),
+        displayLabel: matched.map(p => p.name).join(", ") || parsed.map(p => p.id).join(", "),
+        ids: tagged,
         entries: matched.flatMap(p => p.source_breakdown),
       }
     }
-    const matched = ids.flatMap(id =>
-      projects.filter(p => (p.department ?? p.division ?? "") === id)
+    const matched = parsed.flatMap(({ id, source }) =>
+      (sourcesCache[source] ?? []).filter(p => (p.department ?? p.division ?? "") === id)
     )
     return {
-      label: ids.join(" + "),
-      displayLabel: ids.join(", "),
-      ids,
+      label: tagged.join(" + "),
+      displayLabel: parsed.map(p => p.id).join(", "),
+      ids: tagged,
       entries: matched.flatMap(p => p.source_breakdown),
     }
   })
@@ -810,23 +824,38 @@ function ProjectDeptCompare() {
 
   const sourceParam = params.get("source") ?? "live"
 
-  const [projects, setProjects] = useState<FlatProject[]>([])
-  const [loading, setLoading] = useState(true)
+  const [sourcesCache, setSourcesCache] = useState<Record<string, FlatProject[]>>({})
   const [search, setSearch] = useState("")
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [totalEndYear, setTotalEndYear] = useState<number | "all">("all")
+  const fetchingRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     api.snapshots().then(setSnapshots)
   }, [])
 
+  // Every source referenced by any group item (plus whatever is currently
+  // being browsed in the left panel) needs its own data loaded, so items
+  // tagged to different sources/snapshots keep their own numbers.
+  const neededSources = useMemo(() => {
+    const s = new Set<string>([sourceParam])
+    groups.flat().forEach(tagged => s.add(parseTaggedId(tagged).source))
+    return [...s]
+  }, [sourceParam, groups])
+
   useEffect(() => {
-    setLoading(true)
-    const load = sourceParam.startsWith("snap-")
-      ? api.getSnapshot(parseInt(sourceParam.slice(5), 10)).then(d => d.data)
-      : api.flatProjects()
-    load.then(d => { setProjects(d); setLoading(false) })
-  }, [sourceParam])
+    neededSources.forEach(src => {
+      if (sourcesCache[src] || fetchingRef.current.has(src)) return
+      fetchingRef.current.add(src)
+      loadSource(src).then(data => {
+        setSourcesCache(prev => ({ ...prev, [src]: data }))
+      })
+    })
+  }, [neededSources, sourcesCache])
+
+  const projects = sourcesCache[sourceParam] ?? []
+  const loading = !sourcesCache[sourceParam]
 
   const allYears = useMemo(() => {
     const s = new Set<number>()
@@ -849,7 +878,9 @@ function ProjectDeptCompare() {
     return filtered.length ? filtered : allYears
   }, [params, allYears])
 
-  const compiled = useMemo(() => buildGroups(mode, groups, projects), [mode, groups, projects])
+  const effTotalEndYear = totalEndYear === "all" || selectedYears.includes(totalEndYear) ? totalEndYear : "all"
+
+  const compiled = useMemo(() => buildGroups(mode, groups, sourcesCache), [mode, groups, sourcesCache])
   const selectedMetrics = METRICS.filter(m => activeMetrics.has(m.key))
 
   // Items for the left panel
@@ -868,15 +899,17 @@ function ProjectDeptCompare() {
       .map(d => ({ id: d, label: d, sub: undefined }))
   }, [mode, projects, search])
 
+  // Tagged ids currently placed in a group, e.g. "I2566Y015::snap-6"
   const allInGroups = useMemo(() => new Set(groups.flat()), [groups])
 
-  const nameMap = useMemo(() => {
-    const m = new Map<string, string>()
-    projects.forEach(p => m.set(p.project_code, p.name))
-    return m
-  }, [projects])
-
-  const getLabel = (id: string) => nameMap.get(id) ?? id
+  // Chip label shown inside a group — includes the source it's pinned to,
+  // since the same project/department can appear tagged to different versions.
+  const getLabel = (taggedId: string) => {
+    const { id, source } = parseTaggedId(taggedId)
+    const list = sourcesCache[source] ?? []
+    const name = mode === "project" ? (list.find(p => p.project_code === id)?.name ?? id) : id
+    return `${name} · ${getSourceLabel(source, snapshots)}`
+  }
 
   function setUrl(overrides: {
     mode?: Mode
@@ -964,8 +997,12 @@ function ProjectDeptCompare() {
   function onDragEnd({ active, over }: DragEndEvent) {
     setDraggingId(null)
     if (!over) return
-    const itemId = active.data.current?.id as string
-    if (!itemId) return
+    const rawId = active.data.current?.id as string
+    if (!rawId) return
+    // Tag with whatever source is currently browsed, so dropping the same
+    // project/department while browsing a different source/snapshot creates
+    // a distinct, independently-sourced group item.
+    const itemId = tagId(rawId, sourceParam)
 
     const overId = over.id as string
 
@@ -1024,9 +1061,11 @@ function ProjectDeptCompare() {
             ))}
           </div>
 
-          {/* Source picker */}
+          {/* Source picker — controls which version new items are dragged FROM;
+              each dropped item keeps its own source tag, so a project can be
+              compared against a different version of itself across groups */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-400 font-medium">Source:</span>
+            <span className="text-xs text-gray-400 font-medium" title="Items you drag in are tagged with this source">Add from:</span>
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
               <button
                 type="button"
@@ -1086,7 +1125,7 @@ function ProjectDeptCompare() {
                     id={item.id}
                     label={item.label}
                     sub={item.sub}
-                    inUse={allInGroups.has(item.id)}
+                    inUse={allInGroups.has(tagId(item.id, sourceParam))}
                   />
                 ))
               )}
@@ -1191,7 +1230,21 @@ function ProjectDeptCompare() {
                           Group / Metric
                         </th>
                         <th className="text-right px-4 py-3 font-semibold text-gray-600 border-b whitespace-nowrap bg-gray-100">
-                          Total
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span>ผลรวม-</span>
+                            <select
+                              value={effTotalEndYear}
+                              onChange={e => setTotalEndYear(e.target.value === "all" ? "all" : Number(e.target.value))}
+                              onClick={e => e.stopPropagation()}
+                              className="text-right font-normal border border-gray-300 rounded px-1 py-0.5 bg-white"
+                              style={{ fontSize: 11 }}
+                            >
+                              <option value="all">สิ้นสุดแผนงาน</option>
+                              {selectedYears.map(y => (
+                                <option key={y} value={y}>{y}</option>
+                              ))}
+                            </select>
+                          </div>
                         </th>
                         {selectedYears.map(y => (
                           <th key={y} className="text-right px-4 py-3 font-semibold text-gray-600 border-b whitespace-nowrap">
@@ -1220,7 +1273,9 @@ function ProjectDeptCompare() {
                             </td>
                           </tr>
                           {selectedMetrics.map(m => {
-                            const filteredEntries = g.entries.filter(e => selectedYears.includes(e.year))
+                            const filteredEntries = g.entries.filter(e =>
+                              selectedYears.includes(e.year) && (effTotalEndYear === "all" || e.year <= effTotalEndYear)
+                            )
                             const totalVal = sumEntries(filteredEntries)[m.key as keyof ReturnType<typeof sumEntries>] as number
                             return (
                               <tr
@@ -1262,44 +1317,39 @@ function ProjectDeptCompare() {
                   </table>
                 </div>
 
-                {/* Trend chart */}
-                <div className="bg-white rounded-xl border p-6">
-                  <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={chartData} margin={{ top: 4, right: 16, bottom: 4, left: 16 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
-                      <XAxis dataKey="year" tick={{ fontSize: 11 }} />
-                      <YAxis
-                        tick={{ fontSize: 11 }}
-                        tickCount={8}
-                        tickFormatter={v => {
-                          const n = Number(v)
-                          return Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + "K" : n.toFixed(1)
-                        }}
-                      />
-                      <Tooltip
-                        formatter={(v, _name, props) => {
-                          const metricKey = String((props as { dataKey?: string }).dataKey ?? "").split("||")[1] ?? ""
-                          return [fmt(Number(v), metricKey === "pct"), _name]
-                        }}
-                      />
-                      <Legend />
-                      {compiled.flatMap((g, gi) =>
-                        selectedMetrics.map((m, mi) => (
-                          <Line
-                            key={`${g.label}||${m.key}`}
-                            type="monotone"
-                            dataKey={`${g.label}||${m.key}`}
-                            name={`${groupNames[gi] ?? `Group ${gi + 1}`} — ${m.label}`}
-                            stroke={COLORS[gi % COLORS.length]}
-                            strokeWidth={2}
-                            strokeDasharray={mi === 0 ? undefined : "5 3"}
-                            dot={{ r: 3 }}
-                            activeDot={{ r: 5 }}
+                {/* Trend charts — one bar chart per metric */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {selectedMetrics.map(m => (
+                    <div key={m.key} className="bg-white rounded-xl border p-6">
+                      <div className="text-xs font-semibold text-gray-500 mb-2">{m.label}</div>
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={chartData} margin={{ top: 4, right: 16, bottom: 4, left: 16 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" />
+                          <XAxis dataKey="year" tick={{ fontSize: 11 }} />
+                          <YAxis
+                            tick={{ fontSize: 11 }}
+                            tickCount={8}
+                            domain={['auto', 'auto']}
+                            tickFormatter={v => {
+                              const n = Number(v)
+                              return Math.abs(n) >= 1000 ? (n / 1000).toFixed(1) + "K" : n.toFixed(1)
+                            }}
                           />
-                        ))
-                      )}
-                    </LineChart>
-                  </ResponsiveContainer>
+                          <Tooltip formatter={(v, name) => [fmt(Number(v), m.key === "pct"), name]} />
+                          <Legend />
+                          {compiled.map((g, gi) => (
+                            <Bar
+                              key={`${g.label}||${m.key}`}
+                              dataKey={`${g.label}||${m.key}`}
+                              name={groupNames[gi] ?? `Group ${gi + 1}`}
+                              fill={COLORS[gi % COLORS.length]}
+                              radius={[3, 3, 0, 0]}
+                            />
+                          ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ))}
                 </div>
               </>
             )}

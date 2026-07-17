@@ -38,10 +38,12 @@ export const reportApi = {
   createReportGroup: (name: string) => post<ReportGroup>('/report-groups', { name }),
   renameReportGroup: (id: string, name: string) => patch(`/report-groups/${id}`, { name }),
   deleteReportGroup: (id: string) => del(`/report-groups/${id}`),
+  reorderReportGroups: (ids: string[]) => patch('/report-groups/reorder', { ids }),
 
   reports: () => get<Report[]>('/reports'),
   report: (id: string) => get<Report>(`/reports/${id}`),
   createReport: (groupId: string, data: ReportData) => post<Report>('/reports', { groupId, data }),
   updateReportData: (id: string, data: ReportData) => patch(`/reports/${id}`, { data }),
   deleteReport: (id: string) => del(`/reports/${id}`),
+  reorderReports: (ids: string[]) => patch('/reports/reorder', { ids }),
 }

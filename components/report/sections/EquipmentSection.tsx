@@ -218,6 +218,21 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
                   ))}
                 </select>
               )}
+              <input
+                type="number"
+                key={activeYear}
+                defaultValue={activeYear}
+                title="พิมพ์ปีที่ต้องการดู"
+                onBlur={e => { const y = Number(e.target.value); if (y) onActiveYearChange(y) }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const y = Number(e.currentTarget.value)
+                    if (y) onActiveYearChange(y)
+                    e.currentTarget.blur()
+                  }
+                }}
+                className="w-20 text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 text-center focus:outline-none focus:ring-1 focus:ring-indigo-300"
+              />
             </div>
           )}
         </div>
@@ -504,7 +519,7 @@ export default function EquipmentSection({ data, isAdmin, onChange, activeYear, 
         ) : (
           <div className="flex flex-col items-center justify-center py-10 gap-3">
             <p className="text-gray-300 text-sm">
-              {!yearData ? 'ยังไม่มีปี — เพิ่มปีก่อนเพื่อเริ่มรายการ' : allItems.length === 0 ? `ไม่มีรายการสำหรับปี ${activeYear}` : 'ไม่มีรายการในช่วงนี้'}
+              {!yearData || allItems.length === 0 ? `ไม่มีข้อมูลสำหรับปี ${activeYear}` : 'ไม่มีรายการในช่วงนี้'}
             </p>
             {isAdmin && yearData && rowEnd == null && (
               <button

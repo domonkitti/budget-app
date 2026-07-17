@@ -2,13 +2,8 @@
 
 import type { ReactNode } from 'react'
 import type { ReportData } from '@/lib/reportTypes'
-import { fmtMillion, ACTIVE_YEAR } from '@/lib/reportTypes'
+import { fmtMillion } from '@/lib/reportTypes'
 import NumberInput from '@/components/report/NumberInput'
-
-// This report is either a mid-year "เปลี่ยนแปลงงบ" (budget amendment, filed against last year)
-// or the regular "งบประจำปี" (annual budget, filed against the current year).
-const AMENDMENT_YEAR = ACTIVE_YEAR - 1
-const ANNUAL_YEAR = ACTIVE_YEAR
 
 interface Props {
   data: ReportData
@@ -90,17 +85,20 @@ export default function HeaderSection({ data, isAdmin, onChange }: Props) {
             isAdmin ? (
               <span className="inline-flex items-center gap-1">
                 วงเงินปี
-                <select
-                  value={data.fiscalYear}
-                  onChange={e => onChange?.({ fiscalYear: Number(e.target.value) })}
-                  className="border-b border-white/40 focus:border-white outline-none text-xs font-medium bg-transparent text-white"
-                >
-                  {![AMENDMENT_YEAR, ANNUAL_YEAR].includes(data.fiscalYear) && (
-                    <option value={data.fiscalYear} className="text-gray-900">{data.fiscalYear}</option>
-                  )}
-                  <option value={AMENDMENT_YEAR} className="text-gray-900">เปลี่ยนแปลงงบ ({AMENDMENT_YEAR})</option>
-                  <option value={ANNUAL_YEAR} className="text-gray-900">งบประจำปี ({ANNUAL_YEAR})</option>
-                </select>
+                <input
+                  type="number"
+                  key={data.fiscalYear}
+                  defaultValue={data.fiscalYear}
+                  onBlur={e => { const y = Number(e.target.value); if (y) onChange?.({ fiscalYear: y }) }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const y = Number(e.currentTarget.value)
+                      if (y) onChange?.({ fiscalYear: y })
+                      e.currentTarget.blur()
+                    }
+                  }}
+                  className="w-16 border-b border-white/40 focus:border-white outline-none text-xs font-medium bg-transparent text-white"
+                />
               </span>
             ) : `วงเงินปี ${data.fiscalYear}`
           }

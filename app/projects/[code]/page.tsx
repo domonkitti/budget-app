@@ -8,6 +8,7 @@ import type { ProjectDetail, SubJob, BudgetSource, ChangeLogEntry } from "@/lib/
 import { PROJECT_GROUPS } from "@/components/BudgetTable"
 import { useViewMode } from "@/app/SnapshotProvider"
 import { SnapshotProjectView } from "./SnapshotView"
+import { ProjectMetricsTable, FullPlanCard, type MetricEntry, type SourceMetricEntry } from "@/components/ProjectSummaryCards"
 
 const DEFAULT_VIRTUAL_SJ_NAME = "งานรวม"
 
@@ -187,6 +188,11 @@ function ProjectEditor({ code }: { code: string }) {
   const [showAllYears, setShowAllYears] = useState(false)
   const [yearRangeStart, setYearRangeStart] = useState(0)
   const [yearRangeEnd, setYearRangeEnd] = useState(0)
+  // Raw text for the range inputs — only committed to yearRangeStart/yearRangeEnd on
+  // blur/Enter, so a mid-edit value (e.g. "256" while retyping 2564 → 2568) never
+  // drives rangeYears and briefly renders thousands of year columns.
+  const [rangeStartText, setRangeStartText] = useState("")
+  const [rangeEndText, setRangeEndText] = useState("")
 
   // Info editing
   const [editingInfo, setEditingInfo] = useState(false)
@@ -262,6 +268,8 @@ function ProjectEditor({ code }: { code: string }) {
   useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); setYearRangeStart(0); setYearRangeEnd(0); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
   useEffect(() => { if (project && yearRangeStart === 0) { setYearRangeStart(project.year); setYearRangeEnd(project.year) } }, [project, yearRangeStart])
+  useEffect(() => { setRangeStartText(String(yearRangeStart)) }, [yearRangeStart])
+  useEffect(() => { setRangeEndText(String(yearRangeEnd)) }, [yearRangeEnd])
 
 
   function historyFieldLabel(field: string) {
@@ -1428,6 +1436,33 @@ function ProjectEditor({ code }: { code: string }) {
         )}
       </header>
 
+      {/* Summary table */}
+      {project && (
+        <div style={{ padding: "12px 24px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+          <FullPlanCard />
+          <ProjectMetricsTable
+            years={allYears}
+            entries={(project.sub_jobs.length > 0 ? project.sub_jobs : project.budget_sources).map(
+              (e): MetricEntry => ({
+                year: e.data_year,
+                fund_type: e.fund_type,
+                budget: e.budget,
+                target: e.target,
+              })
+            )}
+            sourceEntries={project.budget_sources.map(
+              (e): SourceMetricEntry => ({
+                source: e.source,
+                year: e.data_year,
+                fund_type: e.fund_type,
+                budget: e.budget,
+                target: e.target,
+              })
+            )}
+          />
+        </div>
+      )}
+
       {/* Sum mismatch warning */}
       {project && hasMismatch && (
         <div style={{ background: "#FFF7ED", borderBottom: "1.5px solid #FB923C", padding: "8px 24px" }}>
@@ -1469,15 +1504,19 @@ function ProjectEditor({ code }: { code: string }) {
                   <>
                     <input
                       type="number"
-                      value={yearRangeStart}
-                      onChange={e => setYearRangeStart(Number(e.target.value))}
+                      value={rangeStartText}
+                      onChange={e => setRangeStartText(e.target.value)}
+                      onBlur={() => { const n = Number(rangeStartText); setYearRangeStart(Number.isFinite(n) && n > 0 ? n : yearRangeStart) }}
+                      onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
                       style={{ width: 80, fontSize: 12, border: "1px solid #D1D5DB", borderRadius: 5, padding: "2px 6px", outline: "none" }}
                     />
                     <span style={{ fontSize: 12, color: "#9CA3AF" }}>—</span>
                     <input
                       type="number"
-                      value={yearRangeEnd}
-                      onChange={e => setYearRangeEnd(Number(e.target.value))}
+                      value={rangeEndText}
+                      onChange={e => setRangeEndText(e.target.value)}
+                      onBlur={() => { const n = Number(rangeEndText); setYearRangeEnd(Number.isFinite(n) && n > 0 ? n : yearRangeEnd) }}
+                      onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur() }}
                       style={{ width: 80, fontSize: 12, border: "1px solid #D1D5DB", borderRadius: 5, padding: "2px 6px", outline: "none" }}
                     />
                   </>

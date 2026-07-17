@@ -3,6 +3,7 @@
 import { Fragment } from "react"
 import Link from "next/link"
 import type { FlatProject, SubJobYearEntry, SourceYearEntry } from "@/lib/types"
+import { ProjectMetricsTable, FullPlanCard, type MetricEntry, type SourceMetricEntry } from "@/components/ProjectSummaryCards"
 
 // ── Shared styles (matches edit page) ────────────────────────────────────────
 
@@ -209,6 +210,30 @@ export function SnapshotProjectView({
           {project.department && <span>{project.department}</span>}
           {project.group_name && <span className="font-medium text-indigo-600">{project.group_name}</span>}
         </div>
+      </div>
+
+      <div className="flex flex-col gap-2.5">
+        <FullPlanCard />
+        <ProjectMetricsTable
+          years={years}
+          entries={(project.sub_jobs.length > 0 ? project.sub_jobs : project.source_breakdown).map(
+            (e): MetricEntry => ({
+              year: e.year,
+              fund_type: e.fund_type,
+              budget: e.budget,
+              target: e.target,
+            })
+          )}
+          sourceEntries={project.source_breakdown.map(
+            (e): SourceMetricEntry => ({
+              source: e.source,
+              year: e.year,
+              fund_type: e.fund_type,
+              budget: e.budget,
+              target: e.target,
+            })
+          )}
+        />
       </div>
 
       {project.sub_jobs.length > 0 && (

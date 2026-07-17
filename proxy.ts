@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
-// Auth middleware — currently a passthrough.
+// Auth proxy — currently a passthrough.
 //
 // To add auth:
 //  1. Install a session library (e.g. next-auth, jose)
 //  2. Validate the session/JWT in this function
 //  3. Redirect to /login if the session is invalid:
 //     if (!session) return NextResponse.redirect(new URL("/login", request.url))
-export function middleware(_request: NextRequest) {
+export function proxy(_request: NextRequest) {
   return NextResponse.next()
 }
 
