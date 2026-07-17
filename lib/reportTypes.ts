@@ -14,6 +14,7 @@ export interface Report {
   id: string
   groupId: string
   presetId: string | null
+  order: number
   data: ReportData
 }
 
@@ -115,12 +116,31 @@ export interface ProcurementActivity {
   id: string
   name: string
   months: ProcurementMonth[]
-  details?: string[]
+  // Sub-rows, each with its own gantt timeline. Reports saved before detail
+  // timelines existed stored plain strings — always read through normDetails().
+  details?: (ProcurementDetail | string)[]
+}
+
+export interface ProcurementDetail {
+  name: string
+  months: ProcurementMonth[]
 }
 
 export interface ProcurementMonth {
   active: boolean
   amount?: number
+}
+
+export function emptyMonths(): ProcurementMonth[] {
+  return Array.from({ length: 12 }, () => ({ active: false }))
+}
+
+export function normDetails(details?: (ProcurementDetail | string)[]): ProcurementDetail[] {
+  return (details ?? []).map(d =>
+    typeof d === 'string'
+      ? { name: d, months: emptyMonths() }
+      : { ...d, months: d.months?.length === 12 ? d.months : emptyMonths() }
+  )
 }
 
 export interface LayoutItem {

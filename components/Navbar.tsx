@@ -30,6 +30,7 @@ export default function Navbar() {
   const [scenSaving, setScenSaving] = useState(false)
 
   const [loading, setLoading] = useState(false)
+  const [aiExporting, setAiExporting] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => { loadLists() }, [])
@@ -69,6 +70,25 @@ export default function Navbar() {
       setScenLabel(""); setScenNote("")
       await loadLists()
     } catch {} finally { setScenSaving(false) }
+  }
+
+  async function exportForAI() {
+    setAiExporting(true)
+    try {
+      const { reportApi } = await import("@/lib/reportApi")
+      const [projects, groups, reports] = await Promise.all([
+        api.flatProjects(),
+        reportApi.reportGroups(),
+        reportApi.reports(),
+      ])
+      const { buildAIExport, downloadText } = await import("@/lib/exportAI")
+      const date = new Date().toISOString().slice(0, 10)
+      downloadText(`budget-ai-export-${date}.md`, buildAIExport(projects, groups, reports))
+    } catch (e) {
+      alert(String(e))
+    } finally {
+      setAiExporting(false)
+    }
   }
 
   async function promoteSnapshot(s: Snapshot) {
@@ -174,6 +194,7 @@ export default function Navbar() {
             <Link
               key={l.href}
               href={l.href}
+              prefetch={false}
               className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                 active ? "bg-blue-600 text-white" : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
               }`}
@@ -189,6 +210,24 @@ export default function Navbar() {
 
         {/* Buttons + dropdowns share one ref for outside-click */}
         <div ref={ref} style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 6, position: "relative" }}>
+
+          {/* ── AI export button ── */}
+          <button
+            type="button"
+            onClick={exportForAI}
+            disabled={aiExporting}
+            title="ดาวน์โหลดข้อมูลทั้งหมดเป็นไฟล์ .md — แนบให้ AI (copilot) แล้วถามอะไรก็ได้เกี่ยวกับข้อมูลงบประมาณและรายงาน"
+            style={{
+              ...btnBase,
+              background: "#F9FAFB",
+              color: aiExporting ? "#9CA3AF" : "#6B7280",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" />
+            </svg>
+            {aiExporting ? "Exporting…" : "AI Export"}
+          </button>
 
           {/* ── Snapshots button ── */}
           <div style={{ position: "relative" }}>

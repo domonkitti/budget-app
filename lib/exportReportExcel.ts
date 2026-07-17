@@ -1,5 +1,5 @@
 import type { Report } from "./reportTypes"
-import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP } from "./reportTypes"
+import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP, normDetails } from "./reportTypes"
 
 function workbookSafeName(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, "_")
@@ -168,6 +168,15 @@ export async function exportReportExcel(report: Report) {
           return m.amount != null ? toBaht(m.amount) : "✓"
         }),
       ])
+      for (const d of normDetails(activity.details)) {
+        procAoa.push([
+          `   – ${d.name}`,
+          ...d.months.map(m => {
+            if (!m.active) return ""
+            return m.amount != null ? toBaht(m.amount) : "✓"
+          }),
+        ])
+      }
     }
     procAoa.push([])
   }

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
-import type { ProcurementPlan, ProcurementActivity } from '@/lib/reportTypes'
-import { THAI_MONTHS, fmtMillion } from '@/lib/reportTypes'
+import type { ProcurementPlan, ProcurementActivity, ProcurementMonth } from '@/lib/reportTypes'
+import { THAI_MONTHS, fmtMillion, emptyMonths, normDetails } from '@/lib/reportTypes'
 import { toCleaned, formatDraft } from '@/components/report/NumberInput'
 
 interface Props {
@@ -29,14 +29,19 @@ interface Props {
 }
 
 const PINNED_NAME = 'เบิกจ่าย'
+// The disbursement row is pinned by name prefix, so imported forms ("เบิกจ่ายเงิน(ล้านบาท)")
+// pin the same as hand-created rows.
+const isPinnedActivity = (a: ProcurementActivity) => a.name.trim().startsWith(PINNED_NAME)
 
 type FlatRow = { year: number; activity: ProcurementActivity; globalIdx: number; isPinned: boolean; absIdx: number }
+// di = -1 targets the activity's own months; >= 0 targets details[di].
+type CellKey = { year: number; ai: number; di: number; mi: number }
 
 export default function GanttSection({
   data, isAdmin, onChange, pinnedYear, onPinnedYearChange,
   rowStart, rowEnd, isContinuation, continuationLabel, autoSplit, onMeasureOverflow,
 }: Props) {
-  const [editingCell, setEditingCell] = useState<{ year: number; ai: number; mi: number } | null>(null)
+  const [editingCell, setEditingCell] = useState<CellKey | null>(null)
   const [dragOver, setDragOver] = useState<{ year: number; idx: number } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -54,7 +59,7 @@ export default function GanttSection({
   // then the pinned "เบิกจ่าย" row, per year, in render order.
   const flatRows: FlatRow[] = []
   for (const plan of plans) {
-    const pinnedIdx = plan.activities.findIndex(a => a.name === PINNED_NAME)
+    const pinnedIdx = plan.activities.findIndex(isPinnedActivity)
     plan.activities.forEach((activity, globalIdx) => {
       if (globalIdx === pinnedIdx) return
       flatRows.push({ year: plan.fiscalYear, activity, globalIdx, isPinned: false, absIdx: flatRows.length })
@@ -128,38 +133,60 @@ export default function GanttSection({
     })
   }
 
-  function toggleMonth(year: number, globalIdx: number, mi: number) {
+  function patchDetailName(year: number, globalIdx: number, di: number, name: string) {
     patchPlan(year, p => {
       const activities = [...p.activities]
-      const months = [...activities[globalIdx].months]
-      const wasActive = months[mi].active
-      months[mi] = { active: !wasActive, amount: wasActive ? undefined : months[mi].amount }
-      activities[globalIdx] = { ...activities[globalIdx], months }
+      const details = normDetails(activities[globalIdx].details)
+      details[di] = { ...details[di], name }
+      activities[globalIdx] = { ...activities[globalIdx], details }
       return { ...p, activities }
     })
   }
 
-  function setAmount(year: number, globalIdx: number, mi: number, amount: number | undefined) {
+  // di = -1 patches the activity's own months; >= 0 patches details[di].
+  function withMonths(a: ProcurementActivity, di: number, f: (months: ProcurementMonth[]) => ProcurementMonth[]): ProcurementActivity {
+    if (di < 0) return { ...a, months: f(a.months) }
+    const details = normDetails(a.details)
+    details[di] = { ...details[di], months: f(details[di].months) }
+    return { ...a, details }
+  }
+
+  function toggleMonth(year: number, globalIdx: number, di: number, mi: number) {
     patchPlan(year, p => {
       const activities = [...p.activities]
-      const months = [...activities[globalIdx].months]
-      months[mi] = { ...months[mi], amount }
-      activities[globalIdx] = { ...activities[globalIdx], months }
+      activities[globalIdx] = withMonths(activities[globalIdx], di, months => {
+        const next = [...months]
+        const wasActive = next[mi].active
+        next[mi] = { active: !wasActive, amount: wasActive ? undefined : next[mi].amount }
+        return next
+      })
       return { ...p, activities }
     })
   }
 
-  function handleCellClick(year: number, globalIdx: number, mi: number, isActive: boolean) {
+  function setAmount(year: number, globalIdx: number, di: number, mi: number, amount: number | undefined) {
+    patchPlan(year, p => {
+      const activities = [...p.activities]
+      activities[globalIdx] = withMonths(activities[globalIdx], di, months => {
+        const next = [...months]
+        next[mi] = { ...next[mi], amount }
+        return next
+      })
+      return { ...p, activities }
+    })
+  }
+
+  function handleCellClick(year: number, globalIdx: number, di: number, mi: number, isActive: boolean) {
     if (!isAdmin) return
     if (clickTimerRef.current) {
       clearTimeout(clickTimerRef.current)
       clickTimerRef.current = null
-      if (!isActive) toggleMonth(year, globalIdx, mi)
-      setEditingCell({ year, ai: globalIdx, mi })
+      if (!isActive) toggleMonth(year, globalIdx, di, mi)
+      setEditingCell({ year, ai: globalIdx, di, mi })
     } else {
       clickTimerRef.current = setTimeout(() => {
         clickTimerRef.current = null
-        toggleMonth(year, globalIdx, mi)
+        toggleMonth(year, globalIdx, di, mi)
       }, 240)
     }
   }
@@ -168,9 +195,17 @@ export default function GanttSection({
     saveRegular(year, pinnedActivity, [...regularActivities, {
       id: `a${Date.now()}`,
       name: 'กิจกรรมใหม่',
-      months: Array.from({ length: 12 }, () => ({ active: false })),
+      months: emptyMonths(),
       details: [],
     }])
+  }
+
+  function addDetail(year: number, globalIdx: number, activity: ProcurementActivity) {
+    patchActivity(year, globalIdx, { details: [...normDetails(activity.details), { name: '', months: emptyMonths() }] })
+  }
+
+  function removeDetail(year: number, globalIdx: number, activity: ProcurementActivity, di: number) {
+    patchActivity(year, globalIdx, { details: normDetails(activity.details).filter((_, j) => j !== di) })
   }
 
   // Drag reorder (regular activities only)
@@ -213,9 +248,9 @@ export default function GanttSection({
     onChange(data.filter(p => p.fiscalYear !== year))
   }
 
-  function renderMonthBars(year: number, activity: ProcurementActivity, globalIdx: number, isDisbursement: boolean) {
-    return activity.months.map((month, mi) => {
-      const isEditing = editingCell?.year === year && editingCell.ai === globalIdx && editingCell.mi === mi
+  function renderMonthBars(year: number, globalIdx: number, di: number, months: ProcurementMonth[], isDisbursement: boolean) {
+    return months.map((month, mi) => {
+      const isEditing = editingCell?.year === year && editingCell.ai === globalIdx && editingCell.di === di && editingCell.mi === mi
       if (isEditing) {
         return (
           <div key={mi} className="flex-1">
@@ -241,13 +276,13 @@ export default function GanttSection({
               }}
               onBlur={e => {
                 const v = toCleaned(e.target.value)
-                setAmount(year, globalIdx, mi, v && v !== '.' ? Number(v) : undefined)
+                setAmount(year, globalIdx, di, mi, v && v !== '.' ? Number(v) : undefined)
                 setEditingCell(null)
               }}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   const v = toCleaned(e.currentTarget.value)
-                  setAmount(year, globalIdx, mi, v && v !== '.' ? Number(v) : undefined)
+                  setAmount(year, globalIdx, di, mi, v && v !== '.' ? Number(v) : undefined)
                   setEditingCell(null)
                 }
                 if (e.key === 'Escape') setEditingCell(null)
@@ -260,7 +295,7 @@ export default function GanttSection({
       return (
         <div
           key={mi}
-          onClick={() => handleCellClick(year, globalIdx, mi, month.active)}
+          onClick={() => handleCellClick(year, globalIdx, di, mi, month.active)}
           title={isAdmin ? (isDisbursement ? 'คลิก = toggle · ดับเบิลคลิก = ใส่ยอดเงิน' : 'คลิกเพื่อ toggle') : month.amount ? fmtMillion(month.amount) : undefined}
           className={`flex-1 flex items-center justify-center select-none ${
             isAdmin ? 'cursor-pointer' : ''
@@ -278,6 +313,57 @@ export default function GanttSection({
         </div>
       )
     })
+  }
+
+  // Read-only per-month sums shown on the pinned row when it has detail rows —
+  // the details carry the editable amounts, the top row just totals them.
+  function renderSummedBars(sums: number[]) {
+    return sums.map((sum, mi) => (
+      <div
+        key={mi}
+        title="รวมจากรายละเอียด"
+        className="flex-1 h-5 rounded-sm border border-gray-200 bg-gray-50 flex items-center justify-center select-none"
+      >
+        {sum > 0 && (
+          <span className="text-[9px] leading-none text-gray-500 font-medium px-0.5 truncate">
+            {fmtMillion(sum)}
+          </span>
+        )}
+      </div>
+    ))
+  }
+
+  function renderDetailRows(row: FlatRow, isDisbursement: boolean) {
+    const details = normDetails(row.activity.details)
+    return details.map((d, di) => (
+      <div key={di} className="flex items-start gap-2 py-0.5">
+        <div className="w-48 shrink-0 flex items-center gap-1 pl-7">
+          <span className="text-gray-300 text-xs shrink-0">–</span>
+          {isAdmin ? (
+            <input
+              value={d.name}
+              onChange={e => patchDetailName(row.year, row.globalIdx, di, e.target.value)}
+              placeholder="รายละเอียด..."
+              className="flex-1 min-w-0 border-b border-gray-100 focus:border-indigo-300 outline-none text-xs py-0.5 bg-transparent text-gray-500"
+            />
+          ) : (
+            <span className="flex-1 min-w-0 text-[11px] text-gray-500 truncate">{d.name}</span>
+          )}
+        </div>
+        <div className="flex flex-1 gap-0.5 pt-0.5">
+          {renderMonthBars(row.year, row.globalIdx, di, d.months, isDisbursement)}
+        </div>
+        <div className="w-20 shrink-0 text-right text-[10px] text-gray-400 font-mono pt-1">
+          {isDisbursement ? fmtMillion(d.months.reduce((s, m) => s + (m.amount ?? 0), 0)) : ''}
+        </div>
+        {isAdmin && (
+          <button
+            onClick={() => removeDetail(row.year, row.globalIdx, row.activity, di)}
+            className="text-gray-200 hover:text-red-400 text-xs p-1 shrink-0 w-5"
+          >✕</button>
+        )}
+      </div>
+    ))
   }
 
   return (
@@ -319,7 +405,7 @@ export default function GanttSection({
           <div ref={rowsRef} className="space-y-6">
             {yearBuckets.map(bucket => {
               const fullPlan = plans.find(p => p.fiscalYear === bucket.year)
-              const pinnedIdxFull = fullPlan ? fullPlan.activities.findIndex(a => a.name === PINNED_NAME) : -1
+              const pinnedIdxFull = fullPlan ? fullPlan.activities.findIndex(isPinnedActivity) : -1
               const fullRegularActivities = fullPlan ? fullPlan.activities.filter((_, i) => i !== pinnedIdxFull) : []
               const fullPinnedActivity = fullPlan && pinnedIdxFull >= 0 ? fullPlan.activities[pinnedIdxFull] : null
 
@@ -353,59 +439,48 @@ export default function GanttSection({
                   <div className="space-y-1.5">
                     {bucket.rows.map(row => {
                       if (row.isPinned) {
+                        const details = normDetails(row.activity.details)
+                        const hasDetails = details.length > 0
+                        // With detail rows the top เบิกจ่าย row shows their per-month sums;
+                        // without, it stays directly editable as before.
+                        const monthSums = hasDetails
+                          ? Array.from({ length: 12 }, (_, mi) => details.reduce((s, d) => s + (d.months[mi]?.amount ?? 0), 0))
+                          : []
+                        const total = hasDetails
+                          ? monthSums.reduce((s, v) => s + v, 0)
+                          : row.activity.months.reduce((s, m) => s + (m.amount ?? 0), 0)
+
                         return (
-                          <div key={row.activity.id} data-row-i={row.absIdx} className="flex items-start gap-2 py-0.5 pt-2 border-t-2 border-gray-300">
-                            <div className="w-48 shrink-0">
-                              {isAdmin ? (
-                                <div className="space-y-1 pl-5">
+                          <div key={row.activity.id} data-row-i={row.absIdx} className="pt-2 border-t-2 border-gray-300">
+                            <div className="flex items-start gap-2 py-0.5">
+                              <div className="w-48 shrink-0 pl-5">
+                                {isAdmin ? (
                                   <input
                                     value={row.activity.name}
                                     onChange={e => patchActivity(row.year, row.globalIdx, { name: e.target.value })}
                                     className="w-full border-b border-indigo-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent font-medium text-indigo-700"
                                   />
-                                  {(row.activity.details ?? []).map((d, di) => (
-                                    <div key={di} className="flex items-center gap-1">
-                                      <span className="text-gray-300 text-xs shrink-0">–</span>
-                                      <input
-                                        value={d}
-                                        onChange={e => {
-                                          const details = [...(row.activity.details ?? [])]
-                                          details[di] = e.target.value
-                                          patchActivity(row.year, row.globalIdx, { details })
-                                        }}
-                                        className="flex-1 border-b border-gray-100 focus:border-indigo-300 outline-none text-xs py-0.5 bg-transparent text-gray-500"
-                                      />
-                                      <button
-                                        onClick={() => patchActivity(row.year, row.globalIdx, { details: (row.activity.details ?? []).filter((_, j) => j !== di) })}
-                                        className="text-gray-200 hover:text-red-400 text-xs shrink-0"
-                                      >✕</button>
-                                    </div>
-                                  ))}
-                                  <button
-                                    onClick={() => patchActivity(row.year, row.globalIdx, { details: [...(row.activity.details ?? []), ''] })}
-                                    className="text-xs text-gray-300 hover:text-indigo-400"
-                                  >+ รายละเอียด</button>
-                                </div>
-                              ) : (
-                                <div>
+                                ) : (
                                   <span className="text-xs font-semibold text-indigo-700 truncate block">{row.activity.name}</span>
-                                  {(row.activity.details ?? []).length > 0 && (
-                                    <ul className="mt-0.5 space-y-0.5">
-                                      {(row.activity.details ?? []).map((d, di) => (
-                                        <li key={di} className="text-[10px] text-gray-400 flex gap-1"><span>–</span>{d}</li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              )}
+                                )}
+                              </div>
+                              <div className="flex flex-1 gap-0.5 pt-0.5">
+                                {hasDetails
+                                  ? renderSummedBars(monthSums)
+                                  : renderMonthBars(row.year, row.globalIdx, -1, row.activity.months, true)}
+                              </div>
+                              <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-900 font-mono pt-1">
+                                {fmtMillion(total)}
+                              </div>
+                              {isAdmin && <div className="w-5 shrink-0" />}
                             </div>
-                            <div className="flex flex-1 gap-0.5 pt-0.5">
-                              {renderMonthBars(row.year, row.activity, row.globalIdx, true)}
-                            </div>
-                            <div className="w-20 shrink-0 text-right text-xs font-semibold text-gray-900 font-mono pt-1">
-                              {fmtMillion(row.activity.months.reduce((s, m) => s + (m.amount ?? 0), 0))}
-                            </div>
-                            {isAdmin && <div className="w-5 shrink-0" />}
+                            {renderDetailRows(row, true)}
+                            {isAdmin && (
+                              <button
+                                onClick={() => addDetail(row.year, row.globalIdx, row.activity)}
+                                className="text-xs text-gray-300 hover:text-indigo-400 pl-7 mt-0.5"
+                              >+ รายละเอียด</button>
+                            )}
                           </div>
                         )
                       }
@@ -417,80 +492,56 @@ export default function GanttSection({
                           data-row-i={row.absIdx}
                           onDragOver={e => handleDragOver(e, row.year, trueRIdx)}
                           onDrop={e => handleDrop(e, row.year, trueRIdx, fullRegularActivities, fullPinnedActivity)}
-                          className={`flex items-start gap-2 py-0.5 ${dragOver?.year === row.year && dragOver.idx === trueRIdx ? 'border-t-2 border-indigo-400' : ''}`}
+                          className={dragOver?.year === row.year && dragOver.idx === trueRIdx ? 'border-t-2 border-indigo-400' : ''}
                         >
-                          <div className="w-48 shrink-0">
-                            {isAdmin ? (
-                              <div className="flex items-start gap-1.5">
-                                <span
-                                  draggable={rowEnd == null}
-                                  onDragStart={rowEnd == null ? e => handleDragStart(e, row.year, trueRIdx) : undefined}
-                                  onDragEnd={handleDragEnd}
-                                  className={`mt-1.5 shrink-0 select-none ${rowEnd == null ? 'cursor-grab active:cursor-grabbing text-gray-200 hover:text-gray-400' : 'text-gray-100 cursor-default'}`}
-                                  title={rowEnd == null ? 'ลากเพื่อเรียงลำดับ' : undefined}
-                                >
-                                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-                                    <circle cx="5" cy="4" r="1.2"/><circle cx="11" cy="4" r="1.2"/>
-                                    <circle cx="5" cy="8" r="1.2"/><circle cx="11" cy="8" r="1.2"/>
-                                    <circle cx="5" cy="12" r="1.2"/><circle cx="11" cy="12" r="1.2"/>
-                                  </svg>
-                                </span>
-                                <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex items-start gap-2 py-0.5">
+                            <div className="w-48 shrink-0">
+                              {isAdmin ? (
+                                <div className="flex items-start gap-1.5">
+                                  <span
+                                    draggable={rowEnd == null}
+                                    onDragStart={rowEnd == null ? e => handleDragStart(e, row.year, trueRIdx) : undefined}
+                                    onDragEnd={handleDragEnd}
+                                    className={`mt-1.5 shrink-0 select-none ${rowEnd == null ? 'cursor-grab active:cursor-grabbing text-gray-200 hover:text-gray-400' : 'text-gray-100 cursor-default'}`}
+                                    title={rowEnd == null ? 'ลากเพื่อเรียงลำดับ' : undefined}
+                                  >
+                                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+                                      <circle cx="5" cy="4" r="1.2"/><circle cx="11" cy="4" r="1.2"/>
+                                      <circle cx="5" cy="8" r="1.2"/><circle cx="11" cy="8" r="1.2"/>
+                                      <circle cx="5" cy="12" r="1.2"/><circle cx="11" cy="12" r="1.2"/>
+                                    </svg>
+                                  </span>
                                   <input
                                     value={row.activity.name}
                                     onChange={e => patchActivity(row.year, row.globalIdx, { name: e.target.value })}
-                                    className="w-full border-b border-gray-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent font-medium text-gray-700"
+                                    className="flex-1 min-w-0 border-b border-gray-200 focus:border-indigo-400 outline-none text-xs py-0.5 bg-transparent font-medium text-gray-700"
                                   />
-                                  {(row.activity.details ?? []).map((d, di) => (
-                                    <div key={di} className="flex items-center gap-1">
-                                      <span className="text-gray-300 text-xs shrink-0">–</span>
-                                      <input
-                                        value={d}
-                                        onChange={e => {
-                                          const details = [...(row.activity.details ?? [])]
-                                          details[di] = e.target.value
-                                          patchActivity(row.year, row.globalIdx, { details })
-                                        }}
-                                        className="flex-1 border-b border-gray-100 focus:border-indigo-300 outline-none text-xs py-0.5 bg-transparent text-gray-500"
-                                      />
-                                      <button
-                                        onClick={() => patchActivity(row.year, row.globalIdx, { details: (row.activity.details ?? []).filter((_, j) => j !== di) })}
-                                        className="text-gray-200 hover:text-red-400 text-xs shrink-0"
-                                      >✕</button>
-                                    </div>
-                                  ))}
-                                  <button
-                                    onClick={() => patchActivity(row.year, row.globalIdx, { details: [...(row.activity.details ?? []), ''] })}
-                                    className="text-xs text-gray-300 hover:text-indigo-400"
-                                  >+ รายละเอียด</button>
                                 </div>
-                              </div>
-                            ) : (
-                              <div>
+                              ) : (
                                 <span className="text-xs font-medium text-gray-700 truncate block">{row.activity.name}</span>
-                                {(row.activity.details ?? []).length > 0 && (
-                                  <ul className="mt-0.5 space-y-0.5">
-                                    {(row.activity.details ?? []).map((d, di) => (
-                                      <li key={di} className="text-[10px] text-gray-400 flex gap-1"><span>–</span>{d}</li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
+                              )}
+                            </div>
+                            <div className="flex flex-1 gap-0.5 pt-0.5">
+                              {renderMonthBars(row.year, row.globalIdx, -1, row.activity.months, false)}
+                            </div>
+                            <div className="w-20 shrink-0" />
+                            {isAdmin && (
+                              <button
+                                onClick={() => saveRegular(row.year, fullPinnedActivity, fullRegularActivities.filter((_, i) => i !== trueRIdx))}
+                                className="text-gray-200 hover:text-red-400 p-1 shrink-0"
+                              >
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                              </button>
                             )}
                           </div>
-                          <div className="flex flex-1 gap-0.5 pt-0.5">
-                            {renderMonthBars(row.year, row.activity, row.globalIdx, false)}
-                          </div>
-                          <div className="w-20 shrink-0" />
+                          {renderDetailRows(row, false)}
                           {isAdmin && (
                             <button
-                              onClick={() => saveRegular(row.year, fullPinnedActivity, fullRegularActivities.filter((_, i) => i !== trueRIdx))}
-                              className="text-gray-200 hover:text-red-400 p-1 shrink-0"
-                            >
-                              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                              </svg>
-                            </button>
+                              onClick={() => addDetail(row.year, row.globalIdx, row.activity)}
+                              className="text-xs text-gray-300 hover:text-indigo-400 pl-7 mt-0.5"
+                            >+ รายละเอียด</button>
                           )}
                         </div>
                       )
