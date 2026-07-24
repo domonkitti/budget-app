@@ -426,7 +426,6 @@ export default function CategorySummaryPage() {
   const [category, setCategory] = useState<Category | null>(null)
   const [yearSummaries, setYearSummaries] = useState<Record<number, CategorySummaryRow[]>>({})
   const [liveProjects, setLiveProjects] = useState<FlatProject[]>([])
-  const [scenarioProjects, setScenarioProjects] = useState<FlatProject[] | null>(null)
   const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [], divisions: [], departments: [], groups: [] })
   const currentBEYear = new Date().getFullYear() + 543
   const [yearFrom, setYearFrom] = useState(String(currentBEYear))
@@ -622,16 +621,6 @@ export default function CategorySummaryPage() {
     }
   }, [categoryName])
 
-  // Load scenario flat data when in scenario mode
-  useEffect(() => {
-    if (viewMode.kind !== "scenario") { setScenarioProjects(null); return }
-    let ignore = false
-    api.scenarioFlat(viewMode.item.id)
-      .then((flat) => { if (!ignore) setScenarioProjects(flat) })
-      .catch(() => {})
-    return () => { ignore = true }
-  }, [viewMode.kind === "scenario" ? viewMode.item.id : 0]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const activeYears = useMemo(() => {
     const from = yearFrom ? Number(yearFrom) : null
     const to = yearTo ? Number(yearTo) : null
@@ -689,11 +678,7 @@ export default function CategorySummaryPage() {
   }, [activeYears, yearSummaries, valueCodes])
 
 
-  const projects = viewMode.kind === "snapshot"
-    ? viewMode.data
-    : viewMode.kind === "scenario" && scenarioProjects
-      ? scenarioProjects
-      : liveProjects
+  const projects = viewMode.kind === "snapshot" ? viewMode.data : liveProjects
 
   const allDivisions = useMemo(() => {
     const set = new Set<string>()
@@ -800,17 +785,6 @@ export default function CategorySummaryPage() {
           <span style={{ fontSize: 12, color: "#4338CA" }}>
             Project table shows snapshot: <strong>{viewMode.item.label}</strong>
             <span style={{ marginLeft: 6, color: "#818CF8", fontSize: 11 }}>(charts reflect live allocation data)</span>
-          </span>
-        </div>
-      )}
-      {viewMode.kind === "scenario" && (
-        <div style={{ background: "#F5F3FF", borderBottom: "1px solid #C4B5FD", padding: "6px 24px", display: "flex", alignItems: "center", gap: 10 }}>
-          <svg width="13" height="13" viewBox="0 0 20 20" fill="#7C3AED">
-            <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-          </svg>
-          <span style={{ fontSize: 12, color: "#5B21B6" }}>
-            Project table shows scenario: <strong>{viewMode.item.label}</strong>
-            <span style={{ marginLeft: 6, color: "#7C3AED", fontSize: 11 }}>(charts reflect live allocation data)</span>
           </span>
         </div>
       )}

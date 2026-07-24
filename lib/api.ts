@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, Scenario, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting } from "./types"
 
 const BASE = "/api/v1"
 const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
@@ -170,19 +170,6 @@ export const api = {
   updateBudgetSource: (id: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
     put(`/budget-sources/${id}`, { budget, target, cut_transfer, under_budget }),
 
-  // Scenarios
-  scenarios: () => get<Scenario[]>("/scenarios"),
-  createScenario: (label: string, note?: string) =>
-    post<Scenario>("/scenarios", { label, note: note ?? "" }),
-  deleteScenario: (id: number) => del(`/scenarios/${id}`),
-  promoteScenario: (id: number) => post<void>(`/scenarios/${id}/promote`, {}),
-  scenarioFlat: (id: number) => get<FlatProject[]>(`/scenarios/${id}/flat`),
-  scenarioProjectDetail: (scenId: number, code: string) =>
-    get<ProjectDetail>(`/scenarios/${scenId}/projects/${encodeURIComponent(code)}`),
-  updateScenarioSubJob: (scenId: number, sjId: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
-    put(`/scenarios/${scenId}/sub-jobs/${sjId}`, { budget, target, cut_transfer, under_budget }),
-  updateScenarioBudgetSource: (scenId: number, bsId: number, budget: number, target: number, cut_transfer = 0, under_budget = 0) =>
-    put(`/scenarios/${scenId}/budget-sources/${bsId}`, { budget, target, cut_transfer, under_budget }),
   // Batch save
   batchSave: (req: BatchSaveRequest) => post<void>("/batch-save", req),
 

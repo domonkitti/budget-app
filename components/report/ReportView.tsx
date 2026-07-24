@@ -5,7 +5,7 @@ import ReactGridLayout, { verticalCompactor, noCompactor } from 'react-grid-layo
 import type { LayoutItem as RGLItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
-import type { Report, ReportData, BasicInfo, Benefits, Preset, SectionKey, LayoutItem } from '@/lib/reportTypes'
+import type { Report, ReportData, BasicInfo, Benefits, Preset, SectionKey, LayoutItem, PageHighlight } from '@/lib/reportTypes'
 import { DEFAULT_PRESET } from '@/lib/reportTypes'
 import HeaderSection from './sections/HeaderSection'
 import BasicInfoSection from './sections/BasicInfoSection'
@@ -13,6 +13,9 @@ import BenefitsSection from './sections/BenefitsSection'
 import BudgetSection from './sections/BudgetSection'
 import EquipmentSection from './sections/EquipmentSection'
 import GanttSection from './sections/GanttSection'
+import HistorySection from './sections/HistorySection'
+import CompareSection from './sections/CompareSection'
+import PageHighlightBox from './PageHighlightBox'
 
 // A4 landscape page at 96 CSS px/inch (297mm x 210mm) — must match SLIDE_WIDTH_PX/SLIDE_HEIGHT_PX
 // in app/api/report-pdf/route.ts, since each .page-card-body is captured 1:1 into one PDF page.
@@ -33,6 +36,8 @@ const STATIC_LABELS: Record<string, string> = {
   budget: 'งบประมาณ (004/4)',
   equipment: 'วัสดุอุปกรณ์ (007)',
   procurement: 'แผนจัดซื้อ (009)',
+  history: 'ข้อมูลย้อนหลัง',
+  compareTable: 'ตารางเปรียบเทียบ',
 }
 
 function sectionLabel(key: string) {
@@ -69,42 +74,37 @@ interface Props {
 
 export default function ReportView({ initialReport, isAdmin, savedPresets = [], onSavePreset, onDataChange }: Props) {
   const [report, setReport] = useState<Report>(initialReport)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle')
   // Tracks the report.data object reference that's already saved (or is the original from the
   // server). Compared by reference, not a "did this run already" flag — that distinction matters
   // because React StrictMode's dev-mode double-invoke re-runs this effect a second time for the
   // *same* render/commit, with the *same* report.data reference. A one-shot boolean flag would
   // get flipped by that phantom first run and then wrongly treat the second (still-phantom) run
-  // as a real edit, firing a save with nothing actually changed. Comparing references instead
+  // as a real edit, marking it dirty with nothing actually changed. Comparing references instead
   // correctly recognizes "still the same object" and skips it either way.
   const lastSavedDataRef = useRef<ReportData | null>(null)
 
-  // Debounced autosave: waits for edits to settle before PATCHing the whole data blob, so rapid
-  // keystrokes don't hammer the API. Purely fire-and-report — never blocks or reverts local edits
-  // on failure.
+  // No autosave — edits only mark the report dirty. Saving to the server only ever happens when
+  // the admin explicitly clicks "บันทึก" (saveNow), so nothing is written before they decide to.
   useEffect(() => {
     if (!onDataChange) return
     if (lastSavedDataRef.current === null) { lastSavedDataRef.current = report.data; return }
     if (lastSavedDataRef.current === report.data) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    setSaveStatus('saving')
-    saveTimerRef.current = setTimeout(() => {
-      const dataAtSaveTime = report.data
-      Promise.resolve(onDataChange(dataAtSaveTime))
-        .then(() => { lastSavedDataRef.current = dataAtSaveTime; setSaveStatus('saved') })
-        .catch(() => setSaveStatus('error'))
-    }, 800)
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setSaveStatus('dirty')
   }, [report.data])
 
-  // Manual save button — cancels any pending debounce and saves immediately, so admins get an
-  // explicit confirmation instead of only trusting the background autosave.
+  // No autosave means unsaved edits can be lost on a stray tab close/refresh — warn before that.
+  useEffect(() => {
+    if (saveStatus !== 'dirty') return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [saveStatus])
+
   function saveNow() {
     if (!onDataChange) return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     setSaveStatus('saving')
+    localStorage.setItem(`report-preset-${initialReport.id}`, JSON.stringify(activePreset))
     const dataAtSaveTime = report.data
     Promise.resolve(onDataChange(dataAtSaveTime))
       .then(() => { lastSavedDataRef.current = dataAtSaveTime; setSaveStatus('saved') })
@@ -138,12 +138,19 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
   const [saveLabel, setSaveLabel] = useState('')
   const [showSaveInput, setShowSaveInput] = useState(false)
   const [dragOverPage, setDragOverPage] = useState<number | null>(null)
-  const [previewMode, setPreviewMode] = useState(false)
+  // Three stages instead of a plain edit/preview toggle: 'edit' is today's full editing, 'locked'
+  // is the old read-only preview. 'highlight' sits in between — content is frozen (same as
+  // 'locked') so the page renders at its true final size, and only the floating highlight boxes
+  // stay interactive. Drawing boxes against the real final layout (instead of the fixed-height
+  // edit canvas) is what keeps their position from drifting between the editor and the preview.
+  const [stage, setStage] = useState<'edit' | 'highlight' | 'locked'>('edit')
   const [equipmentActiveYear, setEquipmentActiveYear] = useState<number | null>(null)
   const [draggedPage, setDraggedPage] = useState<number | null>(null)
   const [trayOpen, setTrayOpen] = useState(true)
 
-  const effectiveAdmin = isAdmin && !previewMode
+  const effectiveAdmin = isAdmin && stage === 'edit'
+  const highlightEditable = isAdmin && stage === 'highlight'
+  const canEdit = isAdmin && stage !== 'locked'
   const data = report.data
 
   function patchData(patch: Partial<ReportData>) {
@@ -156,12 +163,13 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
     setReport(r => ({ ...r, data: { ...r.data, benefits: { ...r.data.benefits, ...patch } } }))
   }
 
+  // Layout/visibility edits (hide/show a card, drag-resize, autoSplit toggle, duplicate,
+  // move to a page, ...) — like data edits, these only mark the report dirty. They used to
+  // write straight to localStorage on every call regardless of the save button; now they wait
+  // for the same explicit save as everything else.
   function updatePreset(updater: (p: Preset) => Preset) {
-    setActivePreset(p => {
-      const next = updater(p)
-      localStorage.setItem(`report-preset-${initialReport.id}`, JSON.stringify(next))
-      return next
-    })
+    setActivePreset(updater)
+    setSaveStatus('dirty')
   }
 
   function handleLayoutChange(newLayout: readonly RGLItem[]) {
@@ -405,6 +413,21 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
     updatePreset(p => ({ ...p, layout: p.layout.map(li => li.i === key ? { ...li, pinnedYear: year } : li) }))
   }
 
+  function addHighlight(page: number) {
+    updatePreset(p => ({
+      ...p,
+      highlights: [...(p.highlights ?? []), { id: `hl-${Date.now()}`, page, x: 40, y: 40, w: 220, h: 120, color: 'red' }],
+    }))
+  }
+
+  function updateHighlight(id: string, patch: Partial<PageHighlight>) {
+    updatePreset(p => ({ ...p, highlights: (p.highlights ?? []).map(h => h.id === id ? { ...h, ...patch } : h) }))
+  }
+
+  function removeHighlight(id: string) {
+    updatePreset(p => ({ ...p, highlights: (p.highlights ?? []).filter(h => h.id !== id) }))
+  }
+
   function toggleVisible(key: SectionKey) {
     updatePreset(p => ({
       ...p,
@@ -563,6 +586,23 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
             onMeasureOverflow={effectiveAdmin ? (lastFitIdx, totalRows) => handleRowOverflow(item.i, lastFitIdx, totalRows) : undefined}
           />
         )
+      case 'history':
+        return (
+          <HistorySection
+            data={data.history}
+            fiscalYear={data.fiscalYear}
+            isAdmin={effectiveAdmin}
+            onChange={effectiveAdmin ? (h) => patchData({ history: h }) : undefined}
+          />
+        )
+      case 'compareTable':
+        return (
+          <CompareSection
+            data={data.compareTable}
+            isAdmin={effectiveAdmin}
+            onChange={effectiveAdmin ? (ct) => patchData({ compareTable: ct }) : undefined}
+          />
+        )
       default:
         return null
     }
@@ -617,31 +657,43 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
             </>
           )}
 
-          <button
-            onClick={() => setPreviewMode(p => !p)}
-            className={`text-xs rounded-lg px-3 py-1.5 font-medium border ${
-              previewMode ? 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700' : 'text-gray-600 hover:text-gray-900 border-gray-300'
-            }`}
-          >
-            {previewMode ? '← กลับไปแก้ไข' : 'ดูตัวอย่าง'}
-          </button>
+          <div className="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
+            {([
+              { key: 'edit', label: 'แก้ไข' },
+              { key: 'highlight', label: 'ไฮไลต์' },
+              { key: 'locked', label: 'ล็อก (ดูตัวอย่าง)' },
+            ] as const).map(s => (
+              <button
+                key={s.key}
+                onClick={() => setStage(s.key)}
+                className={`text-xs rounded-md px-3 py-1.5 font-medium transition-colors ${
+                  stage === s.key ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
 
-          {onDataChange && effectiveAdmin && (
+          {onDataChange && canEdit && (
             <button
               onClick={saveNow}
               disabled={saveStatus === 'saving'}
-              title="บันทึกเนื้อหารายงานทันที (ปกติระบบบันทึกให้อัตโนมัติอยู่แล้วหลังหยุดพิมพ์)"
+              title="บันทึกเนื้อหารายงาน — การแก้ไขจะไม่ถูกบันทึกจนกว่าจะกดปุ่มนี้"
               className={`text-xs font-medium rounded-lg px-3 py-1.5 border transition-colors ${
                 saveStatus === 'error'
                   ? 'text-red-500 border-red-200 hover:bg-red-50'
                   : saveStatus === 'saving'
                   ? 'text-gray-400 border-gray-200'
+                  : saveStatus === 'dirty'
+                  ? 'text-white bg-indigo-600 border-indigo-600 hover:bg-indigo-700'
                   : 'text-gray-500 border-gray-200 hover:bg-gray-50'
               }`}
             >
               {saveStatus === 'saving' && 'กำลังบันทึก...'}
               {saveStatus === 'saved' && '✓ บันทึกแล้ว'}
               {saveStatus === 'error' && 'บันทึกไม่สำเร็จ — ลองอีกครั้ง'}
+              {saveStatus === 'dirty' && '● บันทึก (มีการแก้ไขที่ยังไม่บันทึก)'}
               {saveStatus === 'idle' && 'บันทึก'}
             </button>
           )}
@@ -652,6 +704,15 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
               Admin — 1 หน้า = 1 หน้าที่ export ลากไอคอนจุดบนการ์ดไปวางที่หน้าอื่นเพื่อย้าย หรือลากจากแผงเนื้อหาทางขวามาวางที่หน้า — ใช้ ⠿ ที่หัวแต่ละหน้าเพื่อสลับลำดับ
+            </span>
+          )}
+
+          {highlightEditable && (
+            <span className="ml-auto text-xs text-red-500 font-medium flex items-center gap-1">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              โหมดไฮไลต์ — เนื้อหาถูกล็อก แก้ไขได้เฉพาะกรอบไฮไลต์ (กด &quot;+ กรอบ&quot; ที่หัวแต่ละหน้า)
             </span>
           )}
         </div>
@@ -761,10 +822,13 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
           // content instead, so a lightly-filled page doesn't show a block of empty space.
           const containerHeight = effectiveAdmin ? SLIDE_CONTENT_BUDGET_PX : Math.max(pageContentHeightPx, ROW_HEIGHT)
           const overBudget = pageContentHeightPx > SLIDE_CONTENT_BUDGET_PX
+          const pageHighlights = (activePreset.highlights ?? []).filter(h => h.page === page)
 
-          // An empty page is just a placeholder for the admin to drag cards into —
-          // skip it entirely for the boss view / PDF export so it doesn't become a blank page.
-          if (isEmpty && !effectiveAdmin) return null
+          // An empty page is just a placeholder for the admin to drag cards into (or, in the
+          // highlight stage, to drop a highlight box onto) — skip it entirely for the locked
+          // view / PDF export so it doesn't become a blank page. A page that's empty of cards
+          // but still has a highlight box drawn on it stays visible everywhere.
+          if (isEmpty && pageHighlights.length === 0 && !canEdit) return null
 
           return (
             <div
@@ -778,28 +842,37 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
               onDragEnter={effectiveAdmin && draggedPage != null && draggedPage !== page ? () => reorderPage(draggedPage, page) : undefined}
               onDrop={effectiveAdmin && draggedPage != null ? e => { e.preventDefault(); setDraggedPage(null) } : undefined}
             >
-              {effectiveAdmin && (
+              {canEdit && (
                 <div className="no-print mb-1.5 px-1 flex items-center justify-between">
                   <span className="text-xs font-semibold text-gray-500">
                     {pageLabels[page] ?? `หน้า ${pageIdx + 1}`}
-                    {overBudget && <span className="ml-2 text-red-500">เนื้อหาเกินขนาดหน้า A4 — เปิด &quot;แบ่งหน้าอัตโนมัติ&quot; (ตาราง 007/009) หรือลดขนาดการ์ด</span>}
+                    {effectiveAdmin && overBudget && <span className="ml-2 text-red-500">เนื้อหาเกินขนาดหน้า A4 — เปิด &quot;แบ่งหน้าอัตโนมัติ&quot; (ตาราง 007/009) หรือลดขนาดการ์ด</span>}
                   </span>
                   <span className="flex items-center gap-2.5">
-                    <span
-                      draggable
-                      onDragStart={e => { e.stopPropagation(); setDraggedPage(page) }}
-                      onDragEnd={() => setDraggedPage(null)}
-                      title="ลากเพื่อสลับลำดับหน้า"
-                      className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-600"
-                    >
-                      ⠿
-                    </span>
-                    <button onClick={() => addPageAfter(page)} title="เพิ่มหน้าใต้หน้านี้" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
-                      + หน้า
-                    </button>
-                    {isEmpty && sortedPages.length > 1 && (
-                      <button onClick={() => removePage(page)} title="ลบหน้านี้" className="text-xs text-gray-400 hover:text-red-500">
-                        ✕
+                    {effectiveAdmin && (
+                      <>
+                        <span
+                          draggable
+                          onDragStart={e => { e.stopPropagation(); setDraggedPage(page) }}
+                          onDragEnd={() => setDraggedPage(null)}
+                          title="ลากเพื่อสลับลำดับหน้า"
+                          className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-600"
+                        >
+                          ⠿
+                        </span>
+                        <button onClick={() => addPageAfter(page)} title="เพิ่มหน้าใต้หน้านี้" className="text-xs text-indigo-500 hover:text-indigo-700 font-medium">
+                          + หน้า
+                        </button>
+                        {isEmpty && sortedPages.length > 1 && (
+                          <button onClick={() => removePage(page)} title="ลบหน้านี้" className="text-xs text-gray-400 hover:text-red-500">
+                            ✕
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {highlightEditable && (
+                      <button onClick={() => addHighlight(page)} title="เพิ่มกรอบไฮไลต์ลอยบนหน้านี้ — ลากย้าย/ย่อขยายได้ แต่ย้ายข้ามหน้าไม่ได้" className="text-xs text-red-500 hover:text-red-700 font-medium">
+                        + กรอบ
                       </button>
                     )}
                   </span>
@@ -932,6 +1005,21 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
                     style={{ height: SLIDE_CONTENT_BUDGET_PX }}
                   >
                     ลากการ์ดมาไว้ที่หน้านี้ (ลากที่ไอคอนจุด) หรือใช้ dropdown &quot;หน้า&quot; บนการ์ด
+                  </div>
+                )}
+                {!effectiveAdmin && pageHighlights.length > 0 && (
+                  <div className="absolute inset-0 z-40 pointer-events-none">
+                    {pageHighlights.map(h => (
+                      <PageHighlightBox
+                        key={h.id}
+                        highlight={h}
+                        containerW={SLIDE_CONTENT_WIDTH_PX}
+                        containerH={containerHeight}
+                        isAdmin={highlightEditable}
+                        onChange={patch => updateHighlight(h.id, patch)}
+                        onDelete={() => removeHighlight(h.id)}
+                      />
+                    ))}
                   </div>
                 )}
               </div>

@@ -112,14 +112,6 @@ export type SnapshotDetail = Snapshot & {
   data: FlatProject[]
 }
 
-export type Scenario = {
-  id: number
-  label: string
-  note?: string
-  created_at: string
-  updated_at: string
-}
-
 export type ChangeLogEntry = {
   id: number
   table_name: string

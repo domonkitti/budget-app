@@ -222,6 +222,8 @@ export function SnapshotProjectView({
               fund_type: e.fund_type,
               budget: e.budget,
               target: e.target,
+              cut_transfer: e.cut_transfer,
+              under_budget: e.under_budget,
             })
           )}
           sourceEntries={project.source_breakdown.map(
@@ -231,6 +233,8 @@ export function SnapshotProjectView({
               fund_type: e.fund_type,
               budget: e.budget,
               target: e.target,
+              cut_transfer: e.cut_transfer,
+              under_budget: e.under_budget,
             })
           )}
         />

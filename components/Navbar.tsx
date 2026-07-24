@@ -4,7 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useEffect, useRef, useState } from "react"
 import { api } from "@/lib/api"
-import type { Snapshot, Scenario } from "@/lib/types"
+import type { Snapshot } from "@/lib/types"
 import { useViewMode } from "@/app/SnapshotProvider"
 
 function fmtDate(s: string) {
@@ -13,21 +13,15 @@ function fmtDate(s: string) {
 
 export default function Navbar() {
   const path = usePathname()
-  const { viewMode, setSnapshot, setScenario, clearMode } = useViewMode()
+  const { viewMode, setSnapshot, clearMode } = useViewMode()
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [scenarios, setScenarios] = useState<Scenario[]>([])
-  const [openPanel, setOpenPanel] = useState<"snapshots" | "scenarios" | null>(null)
+  const [openPanel, setOpenPanel] = useState<"snapshots" | null>(null)
 
   // Snapshot form
   const [snapLabel, setSnapLabel] = useState("")
   const [snapNote, setSnapNote] = useState("")
   const [snapSaving, setSnapSaving] = useState(false)
-
-  // Scenario form
-  const [scenLabel, setScenLabel] = useState("")
-  const [scenNote, setScenNote] = useState("")
-  const [scenSaving, setScenSaving] = useState(false)
 
   const [loading, setLoading] = useState(false)
   const [aiExporting, setAiExporting] = useState(false)
@@ -46,9 +40,7 @@ export default function Navbar() {
 
   async function loadLists() {
     try {
-      const [snaps, scens] = await Promise.all([api.snapshots(), api.scenarios()])
-      setSnapshots(snaps)
-      setScenarios(scens)
+      setSnapshots(await api.snapshots())
     } catch {}
   }
 
@@ -60,16 +52,6 @@ export default function Navbar() {
       setSnapLabel(""); setSnapNote("")
       await loadLists()
     } catch {} finally { setSnapSaving(false) }
-  }
-
-  async function saveScenario() {
-    if (!scenLabel.trim()) return
-    setScenSaving(true)
-    try {
-      await api.createScenario(scenLabel.trim(), scenNote.trim())
-      setScenLabel(""); setScenNote("")
-      await loadLists()
-    } catch {} finally { setScenSaving(false) }
   }
 
   async function exportForAI() {
@@ -92,20 +74,19 @@ export default function Navbar() {
   }
 
   async function promoteSnapshot(s: Snapshot) {
-    if (!confirm(`Restore snapshot "${s.label}" to LIVE?\n\nThis will overwrite current live data with the snapshot values.`)) return
+    const defaultName = `Live before restoring "${s.label}" — ${fmtDate(new Date().toISOString())}`
+    const backupName = window.prompt(
+      `Restoring "${s.label}" will overwrite current LIVE data.\n\nName a backup of the current LIVE data before continuing (or Cancel to abort):`,
+      defaultName
+    )
+    if (backupName === null) return
     try {
+      await api.createSnapshot(backupName.trim() || defaultName, "Auto-backup before restoring a snapshot")
       await api.promoteSnapshot(s.id)
-      clearMode()
-      setOpenPanel(null)
-    } catch (e) { alert(String(e)) }
-  }
-
-  async function promoteScenario(s: Scenario) {
-    if (!confirm(`Promote scenario "${s.label}" to LIVE?\n\nThis will overwrite current live data with the scenario values.`)) return
-    try {
-      await api.promoteScenario(s.id)
-      clearMode()
-      setOpenPanel(null)
+      // Force a full reload — pages only refetch live data when viewMode.kind
+      // *changes*, so if we were already on LIVE this is otherwise a no-op
+      // and the page keeps showing stale pre-promote numbers.
+      window.location.reload()
     } catch (e) { alert(String(e)) }
   }
 
@@ -124,20 +105,13 @@ export default function Navbar() {
     await loadLists()
   }
 
-  async function deleteScenario(id: number) {
-    if (!confirm("Delete this scenario?")) return
-    await api.deleteScenario(id)
-    if (viewMode.kind === "scenario" && viewMode.item.id === id) clearMode()
-    await loadLists()
-  }
-
   const navLinks = [
     { href: "/", label: "Overall" },
     { href: "/category", label: "Category" },
     { href: "/compare", label: "Compare" },
+    { href: "/scoring", label: "Scoring" },
     { href: "/projects", label: "Projects" },
     { href: "/report", label: "Report" },
-    { href: "/onepage/g1/r1", label: "Summary" },
     { href: "/admin", label: "Admin" },
   ]
 
@@ -161,17 +135,6 @@ export default function Navbar() {
         </button>
       </div>
     )
-  } else {
-    modePill = (
-      <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#F5F3FF", border: "1px solid #A78BFA", borderRadius: 7, padding: "3px 10px", fontSize: 12 }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8B5CF6", flexShrink: 0 }} />
-        <span style={{ color: "#5B21B6", fontWeight: 600 }}>WHAT IF</span>
-        <span style={{ color: "#4C1D95", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>: {viewMode.item.label}</span>
-        <button type="button" onClick={clearMode} style={{ marginLeft: 4, background: "#8B5CF6", color: "#fff", border: "none", borderRadius: 4, padding: "1px 7px", fontSize: 11, cursor: "pointer", fontWeight: 600, flexShrink: 0 }}>
-          Back to LIVE
-        </button>
-      </div>
-    )
   }
 
   const btnBase: React.CSSProperties = {
@@ -188,8 +151,7 @@ export default function Navbar() {
         {navLinks.map((l) => {
           const active = path === l.href ||
             (l.href === "/projects" && (path.startsWith("/projects") || path.startsWith("/import"))) ||
-            (l.href === "/report" && path.startsWith("/report")) ||
-            (l.href === "/onepage/g1/r1" && path.startsWith("/onepage"))
+            (l.href === "/report" && path.startsWith("/report"))
           return (
             <Link
               key={l.href}
@@ -293,69 +255,6 @@ export default function Navbar() {
             )}
           </div>
 
-          {/* ── Scenarios button ── */}
-          <div style={{ position: "relative" }}>
-            <button
-              type="button"
-              onClick={() => setOpenPanel(openPanel === "scenarios" ? null : "scenarios")}
-              style={{
-                ...btnBase,
-                background: openPanel === "scenarios" ? "#F5F3FF" : "#F9FAFB",
-                color: openPanel === "scenarios" ? "#5B21B6" : "#6B7280",
-                borderColor: openPanel === "scenarios" ? "#A78BFA" : "#E5E7EB",
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
-              </svg>
-              Scenarios
-              {scenarios.length > 0 && (
-                <span style={{ background: "#EDE9FE", borderRadius: 10, padding: "0 5px", fontSize: 10, color: "#5B21B6" }}>{scenarios.length}</span>
-              )}
-            </button>
-
-            {openPanel === "scenarios" && (
-              <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 100, background: "#fff", border: "1px solid #E5E7EB", borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", width: 300, overflow: "hidden" }}>
-                <div style={{ padding: "10px 14px", background: "#F5F3FF", borderBottom: "1px solid #F3F4F6" }}>
-                  <p style={{ fontSize: 11, color: "#5B21B6", lineHeight: 1.5, margin: 0 }}>
-                    <strong>Writable</strong> branches. Edit numbers independently — LIVE data is never affected.
-                  </p>
-                </div>
-                <div style={{ padding: "12px 14px", borderBottom: "1px solid #F3F4F6" }}>
-                  <p style={{ fontSize: 10, fontWeight: 700, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Fork LIVE into a new scenario</p>
-                  <input value={scenLabel} onChange={(e) => setScenLabel(e.target.value)} placeholder="Label (required)" onKeyDown={(e) => e.key === "Enter" && saveScenario()} style={{ width: "100%", border: "1px solid #E5E7EB", borderRadius: 5, padding: "4px 8px", fontSize: 12, marginBottom: 5, boxSizing: "border-box", outline: "none" }} />
-                  <input value={scenNote} onChange={(e) => setScenNote(e.target.value)} placeholder="Note (optional)" style={{ width: "100%", border: "1px solid #E5E7EB", borderRadius: 5, padding: "4px 8px", fontSize: 12, marginBottom: 7, boxSizing: "border-box", outline: "none" }} />
-                  <button type="button" disabled={!scenLabel.trim() || scenSaving} onClick={saveScenario} style={{ width: "100%", background: scenLabel.trim() ? "#8B5CF6" : "#F3F4F6", color: scenLabel.trim() ? "#fff" : "#9CA3AF", border: "none", borderRadius: 5, padding: "5px 0", fontSize: 12, fontWeight: 600, cursor: scenLabel.trim() ? "pointer" : "default" }}>
-                    {scenSaving ? "Creating…" : "Create scenario"}
-                  </button>
-                </div>
-                <div style={{ maxHeight: 240, overflowY: "auto" }}>
-                  {scenarios.length === 0 && <div style={{ padding: "16px", textAlign: "center", fontSize: 12, color: "#9CA3AF" }}>No scenarios yet</div>}
-                  {scenarios.map((s) => {
-                    const active = viewMode.kind === "scenario" && viewMode.item.id === s.id
-                    return (
-                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderBottom: "0.5px solid #F9FAFB", background: active ? "#F5F3FF" : "transparent" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 500, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {active && <span style={{ fontSize: 10, color: "#5B21B6", fontWeight: 700, marginRight: 4 }}>EDITING</span>}
-                            {s.label}
-                          </div>
-                          <div style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtDate(s.created_at)}</div>
-                          {s.note && <div style={{ fontSize: 10, color: "#6B7280" }}>{s.note}</div>}
-                        </div>
-                        <button type="button" onClick={() => { active ? clearMode() : setScenario(s); setOpenPanel(null) }} style={{ background: active ? "#8B5CF6" : "#F3F4F6", color: active ? "#fff" : "#374151", border: "none", borderRadius: 5, padding: "2px 8px", fontSize: 11, cursor: "pointer", fontWeight: 500, flexShrink: 0 }}>
-                          {active ? "← Live" : "Edit"}
-                        </button>
-                        <button type="button" onClick={() => promoteScenario(s)} title="Promote to LIVE" style={{ background: "none", border: "1px solid #E5E7EB", borderRadius: 5, color: "#374151", fontSize: 11, cursor: "pointer", padding: "1px 6px", flexShrink: 0 }}>↑ LIVE</button>
-                        <button type="button" onClick={() => deleteScenario(s.id)} style={{ background: "none", border: "none", color: "#EF4444", fontSize: 12, cursor: "pointer", padding: "1px 3px", flexShrink: 0 }} title="Delete">✕</button>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-          </div>
-
         </div>
       </nav>
 
@@ -373,17 +272,6 @@ export default function Navbar() {
         </div>
       )}
 
-      {viewMode.kind === "scenario" && (
-        <div style={{ background: "#F5F3FF", borderBottom: "1.5px solid #A78BFA", padding: "5px 24px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 48, zIndex: 29 }}>
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="#7C3AED"><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" /></svg>
-          <span style={{ fontSize: 12, color: "#5B21B6" }}>
-            Editing scenario: <strong>{viewMode.item.label}</strong>
-            {viewMode.item.note && <span style={{ marginLeft: 6, color: "#6D28D9" }}>({viewMode.item.note})</span>}
-            <span style={{ marginLeft: 12, color: "#7C3AED" }}>— Changes here do NOT affect LIVE data.</span>
-          </span>
-          <button type="button" onClick={clearMode} style={{ marginLeft: "auto", background: "#8B5CF6", color: "#fff", border: "none", borderRadius: 5, padding: "2px 10px", fontSize: 11, cursor: "pointer", fontWeight: 600, flexShrink: 0 }}>Back to LIVE</button>
-        </div>
-      )}
     </>
   )
 }

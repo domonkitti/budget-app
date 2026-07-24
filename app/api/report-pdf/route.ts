@@ -47,7 +47,14 @@ async function assemblePdf(page: Page, slides: Buffer[]): Promise<Buffer> {
   })
 }
 
-async function generate(req: NextRequest, groupId: string, reportId: string, preset?: string) {
+// Playwright runs in this same container/process — it must navigate back to this very server,
+// not to whatever origin the inbound request appears to have. req.nextUrl.origin reflects the
+// original request's (possibly proxied — ngrok, a reverse proxy, etc.) Host/X-Forwarded-Proto
+// headers, which can come back mismatched (e.g. "https://0.0.0.0:3000") and break page.goto.
+// Same self-referencing-internal-URL pattern as API_INTERNAL_URL in app/api/v1/[...path]/route.ts.
+const SELF_URL = process.env.SELF_URL ?? "http://localhost:3000"
+
+async function generate(groupId: string, reportId: string, preset?: string) {
   const browser = await chromium.launch()
   try {
     const context = await browser.newContext({ viewport: { width: SLIDE_WIDTH_PX, height: 4000 } })
@@ -60,7 +67,7 @@ async function generate(req: NextRequest, groupId: string, reportId: string, pre
 
     const page = await context.newPage()
     await page.emulateMedia({ media: "print" })
-    await page.goto(`${req.nextUrl.origin}/report/${groupId}/${reportId}`, { waitUntil: "networkidle" })
+    await page.goto(`${SELF_URL}/report/${groupId}/${reportId}`, { waitUntil: "networkidle" })
     await page.waitForSelector(".page-card-body")
 
     const slides = await captureSlides(page)
@@ -77,11 +84,22 @@ async function generate(req: NextRequest, groupId: string, reportId: string, pre
   }
 }
 
+// Route handlers otherwise swallow a thrown error into a bare, bodyless 500 — the client then
+// has nothing to show the user beyond the status code. Surface the real message instead.
+async function safeGenerate(...args: Parameters<typeof generate>) {
+  try {
+    return await generate(...args)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return new Response(message, { status: 500 })
+  }
+}
+
 export async function GET(req: NextRequest) {
   const groupId = req.nextUrl.searchParams.get("groupId")
   const reportId = req.nextUrl.searchParams.get("reportId")
   if (!groupId || !reportId) return new Response("Missing groupId or reportId", { status: 400 })
-  return generate(req, groupId, reportId)
+  return safeGenerate(groupId, reportId)
 }
 
 export async function POST(req: NextRequest) {
@@ -89,5 +107,5 @@ export async function POST(req: NextRequest) {
   const reportId = req.nextUrl.searchParams.get("reportId")
   if (!groupId || !reportId) return new Response("Missing groupId or reportId", { status: 400 })
   const body = await req.json().catch(() => ({} as { preset?: string }))
-  return generate(req, groupId, reportId, body.preset)
+  return safeGenerate(groupId, reportId, body.preset)
 }

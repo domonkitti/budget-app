@@ -3,16 +3,18 @@ import { Fragment, useState } from "react"
 const fmt = (n: number) =>
   n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 
-export type MetricEntry = { year: number; fund_type: string; budget: number; target: number }
+export type MetricEntry = { year: number; fund_type: string; budget: number; target: number; cut_transfer: number; under_budget: number }
 export type SourceMetricEntry = MetricEntry & { source: string }
 
 const METRICS = [
   { key: "invest_budget", label: "วงเงิน/ลงทุน" },
   { key: "total_target", label: "เป้า/รวม" },
+  { key: "cut_under", label: "ตัดทิ้ง/โยกย้าย+ต่ำกว่างบ" },
 ] as const
 
 function metricValue(entries: MetricEntry[], key: (typeof METRICS)[number]["key"]) {
   if (key === "invest_budget") return entries.filter(e => e.fund_type === "ลงทุน").reduce((s, e) => s + e.budget, 0)
+  if (key === "cut_under") return entries.reduce((s, e) => s + e.cut_transfer + e.under_budget, 0)
   return entries.reduce((s, e) => s + e.target, 0)
 }
 

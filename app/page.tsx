@@ -10,7 +10,6 @@ import { useViewMode } from "./SnapshotProvider"
 export default function Home() {
   const { viewMode } = useViewMode()
   const [liveData, setLiveData] = useState<FlatProject[]>([])
-  const [scenarioData, setScenarioData] = useState<FlatProject[] | null>(null)
   const [options, setOptions] = useState<FilterOptions>({ years: [], sources: [], divisions: [], departments: [], groups: [] })
   const currentBEYear = new Date().getFullYear() + 543
   const [yearFrom, setYearFrom] = useState(String(currentBEYear))
@@ -25,11 +24,7 @@ export default function Home() {
   const [tableFilteredData, setTableFilteredData] = useState<{ base: FlatProject[]; data: FlatProject[] } | null>(null)
   const tableRef = useRef<BudgetTableHandle>(null)
 
-  const data = viewMode.kind === "snapshot"
-    ? viewMode.data
-    : viewMode.kind === "scenario" && scenarioData
-      ? scenarioData
-      : liveData
+  const data = viewMode.kind === "snapshot" ? viewMode.data : liveData
 
   const activeYears = useMemo(() => {
     const from = yearFrom ? Number(yearFrom) : null
@@ -93,28 +88,13 @@ export default function Home() {
     return () => { ignore = true }
   }, [activeYears, source, division, department, group, viewMode.kind])
 
-  // Load scenario flat data when entering scenario mode
-  useEffect(() => {
-    if (viewMode.kind !== "scenario") { setScenarioData(null); return }
-    let ignore = false
-    setLoading(true)
-    setScenarioData(null)
-    api.scenarioFlat(viewMode.item.id)
-      .then((result) => { if (!ignore) { setScenarioData(result); setError(null) } })
-      .catch((e) => { if (!ignore) setError(e.message) })
-      .finally(() => { if (!ignore) setLoading(false) })
-    return () => { ignore = true }
-  }, [viewMode.kind === "scenario" ? viewMode.item.id : 0]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const isFiltered = viewMode.kind !== "live"
   const exportLabel =
     viewMode.kind === "snapshot"
       ? `Budget Dashboard Snapshot ${viewMode.item.label}`
-      : viewMode.kind === "scenario"
-        ? `Budget Dashboard Scenario ${viewMode.item.label}`
-        : source
-          ? `Budget Dashboard ${source}`
-          : "Budget Dashboard"
+      : source
+        ? `Budget Dashboard ${source}`
+        : "Budget Dashboard"
 
   async function handleExport() {
     setExporting(true)

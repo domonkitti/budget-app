@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 import type { ReportData } from '@/lib/reportTypes'
-import { fmtMillion } from '@/lib/reportTypes'
+import { fmtMillion, durationYears } from '@/lib/reportTypes'
 import NumberInput from '@/components/report/NumberInput'
 
 interface Props {
@@ -60,7 +60,7 @@ export default function HeaderSection({ data, isAdmin, onChange }: Props) {
                   value={bi.startYear}
                   onChange={e => {
                     const startYear = Number(e.target.value) || 0
-                    patchBasicInfo({ startYear, durationYears: Math.max(1, bi.endYear - startYear + 1) })
+                    patchBasicInfo({ startYear, durationYears: durationYears(startYear, bi.endYear) })
                   }}
                   className="w-12 bg-transparent border-b border-white/30 focus:border-white outline-none text-xs text-white"
                 />
@@ -70,13 +70,13 @@ export default function HeaderSection({ data, isAdmin, onChange }: Props) {
                   value={bi.endYear}
                   onChange={e => {
                     const endYear = Number(e.target.value) || 0
-                    patchBasicInfo({ endYear, durationYears: Math.max(1, endYear - bi.startYear + 1) })
+                    patchBasicInfo({ endYear, durationYears: durationYears(bi.startYear, endYear) })
                   }}
                   className="w-12 bg-transparent border-b border-white/30 focus:border-white outline-none text-xs text-white"
                 />
-                <span>({bi.durationYears} ปี)</span>
+                <span>({durationYears(bi.startYear, bi.endYear)} ปี)</span>
               </span>
-            ) : `${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`
+            ) : `${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear})`
           }
           color="indigo"
         />

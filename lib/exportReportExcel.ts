@@ -1,5 +1,5 @@
 import type { Report } from "./reportTypes"
-import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP, normDetails } from "./reportTypes"
+import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP, normDetails, durationYears } from "./reportTypes"
 
 function workbookSafeName(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, "_")
@@ -32,7 +32,7 @@ export async function exportReportExcel(report: Report) {
   infoAoa.push(["ประเภทการลงทุน", data.basicInfo.investmentType])
   infoAoa.push(["สถานภาพโครงการ", data.basicInfo.status])
   infoAoa.push(["พื้นที่", data.basicInfo.area])
-  infoAoa.push(["ระยะเวลา (ปี)", data.basicInfo.durationYears])
+  infoAoa.push(["ระยะเวลา (ปี)", durationYears(data.basicInfo.startYear, data.basicInfo.endYear)])
   infoAoa.push(["ปีเริ่ม - ปีสิ้นสุด", `${data.basicInfo.startYear}-${data.basicInfo.endYear}`])
   infoAoa.push(["วงเงินลงทุนรวม", toBaht(data.basicInfo.totalInvestment)])
   infoAoa.push(["วงเงินปีนี้", toBaht(data.basicInfo.yearInvestment)])

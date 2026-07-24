@@ -19,7 +19,7 @@ API base: `NEXT_PUBLIC_API_URL` (default `http://localhost:8080/api/v1`)
 app/
   layout.tsx                          ← root layout, wraps SnapshotProvider
   page.tsx                            ← home / project list
-  SnapshotProvider.tsx                ← context for active snapshot/scenario
+  SnapshotProvider.tsx                ← context for active snapshot
   categories/page.tsx                 ← tag category management
   category/
     page.tsx                          ← category list
@@ -29,7 +29,7 @@ app/
 
 components/
   BudgetTable.tsx                     ← editable budget grid (sub-jobs + sources)
-  Navbar.tsx                          ← top nav with snapshot/scenario switcher
+  Navbar.tsx                          ← top nav with snapshot switcher
   SummaryCharts.tsx                   ← charts for summary page
 
 lib/
@@ -61,10 +61,8 @@ api.setProjectCategoryAllocations(projectId, categoryId, allocations)
 api.jobCategoryAllocations(projectId, subJobName)
 api.setJobCategoryAllocations(projectId, subJobName, categoryId, allocations)
 
-// Snapshots & Scenarios
+// Snapshots
 api.snapshots() / api.createSnapshot(label, note?) / api.promoteSnapshot(id)
-api.scenarios() / api.createScenario(label, note?) / api.promoteScenario(id)
-api.scenarioFlat(id) / api.scenarioProjectDetail(scenId, code)
 
 // Editing
 api.batchSave(req)                  // preferred bulk edit path
@@ -80,7 +78,7 @@ api.updateBatchComment(batchId, comment)
 ## Key types (`lib/types.ts`)
 - `Project`, `ProjectDetail`, `SubJob`, `BudgetSource`
 - `FlatProject` — flat snapshot shape with `sub_jobs: SubJobYearEntry[]` and `source_breakdown: SourceYearEntry[]`
-- `Snapshot`, `SnapshotDetail`, `Scenario`
+- `Snapshot`, `SnapshotDetail`
 - `TagCategory`, `TagValue`, `ProjectTag`, `SubJobTag`, `CategoryAllocationSelection`
 - `BatchSaveRequest` — bulk edit payload
 - `ChangeLogEntry`

@@ -1,7 +1,7 @@
 'use client'
 
 import type { EquipmentItem, Report } from '@/lib/reportTypes'
-import { fmtMillion, fmtNumber, THAI_MONTHS, ACTIVE_YEAR, DEFAULT_EQUIPMENT_GROUP } from '@/lib/reportTypes'
+import { fmtMillion, fmtNumber, THAI_MONTHS, ACTIVE_YEAR, DEFAULT_EQUIPMENT_GROUP, durationYears } from '@/lib/reportTypes'
 
 interface Props {
   report: Report
@@ -49,7 +49,7 @@ export default function OnePageSummary({ report }: Props) {
 
       {/* KPI row */}
       <div className="grid grid-cols-3 gap-3 mb-5">
-        <Kpi label="วงเงินทั้งสิ้น" value={fmtMillion(bi.totalInvestment)} sub={`${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`} color="bg-indigo-600" />
+        <Kpi label="วงเงินทั้งสิ้น" value={fmtMillion(bi.totalInvestment)} sub={`${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear})`} color="bg-indigo-600" />
         <Kpi label={`วงเงินปี ${data.fiscalYear}`} value={fmtMillion(bi.yearInvestment)} sub="ไม่รวม VAT" color="bg-violet-600" />
         <Kpi label="เป้าเบิกจ่าย" value={fmtMillion(bi.disbursementTarget)} sub={`ปี ${data.fiscalYear}`} color="bg-sky-600" />
       </div>

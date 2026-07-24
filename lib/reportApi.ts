@@ -1,4 +1,5 @@
 import type { ReportGroup, Report, ReportData } from './reportTypes'
+import { emptyHistoryData, emptyCompareTable } from './reportTypes'
 
 const BASE = "/api/v1"
 const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
@@ -33,6 +34,21 @@ async function del(path: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text())
 }
 
+// Reports saved before the history/compareTable sections existed have no corresponding key in
+// their stored JSON — backfill on read so older reports don't crash those sections, instead of
+// migrating every row.
+function withNewSections(report: Report): Report {
+  if (report.data.history && report.data.compareTable) return report
+  return {
+    ...report,
+    data: {
+      ...report.data,
+      history: report.data.history ?? emptyHistoryData(),
+      compareTable: report.data.compareTable ?? emptyCompareTable(),
+    },
+  }
+}
+
 export const reportApi = {
   reportGroups: () => get<ReportGroup[]>('/report-groups'),
   createReportGroup: (name: string) => post<ReportGroup>('/report-groups', { name }),
@@ -41,7 +57,7 @@ export const reportApi = {
   reorderReportGroups: (ids: string[]) => patch('/report-groups/reorder', { ids }),
 
   reports: () => get<Report[]>('/reports'),
-  report: (id: string) => get<Report>(`/reports/${id}`),
+  report: (id: string) => get<Report>(`/reports/${id}`).then(withNewSections),
   createReport: (groupId: string, data: ReportData) => post<Report>('/reports', { groupId, data }),
   updateReportData: (id: string, data: ReportData) => patch(`/reports/${id}`, { data }),
   deleteReport: (id: string) => del(`/reports/${id}`),

@@ -1,10 +1,21 @@
 import type { FlatProject } from './types'
 import type { Report, ReportGroup, ProcurementMonth } from './reportTypes'
-import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP, normDetails } from './reportTypes'
+import { THAI_MONTHS, DEFAULT_EQUIPMENT_GROUP, normDetails, durationYears } from './reportTypes'
 
 // One self-describing .md file with everything the app knows — users attach it to
 // their company copilot chat and ask questions. CSV blocks keep the big tables
 // compact; the legend up top tells the model how to read them.
+
+// TODO: swap in the real deployed URL once the app has one.
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+function projectUrl(projectCode: string): string {
+  return `${BASE_URL}/projects/${encodeURIComponent(projectCode)}`
+}
+
+function reportUrl(groupId: string, reportId: string): string {
+  return `${BASE_URL}/report/${encodeURIComponent(groupId)}/${encodeURIComponent(reportId)}`
+}
 
 function csvCell(v: string | number | null | undefined): string {
   const s = v == null ? '' : String(v)
@@ -35,9 +46,10 @@ function reportMarkdown(report: Report, groupName: string): string {
   const lines: string[] = []
 
   lines.push(`### ${d.projectName || '(ไม่มีชื่อ)'} — ปีงบประมาณ ${d.fiscalYear} (กลุ่ม: ${groupName})`)
+  lines.push(`- ลิงก์รายงาน: ${reportUrl(report.groupId, report.id)}`)
   lines.push(`- หน่วยงาน: กอง ${d.dept || '-'} / ฝ่าย ${d.section || '-'} / แผนก ${bi.responsible.department || '-'} / สายงาน ${bi.responsible.unit || '-'}`)
   lines.push(`- สถานะ: ${bi.status} | ความจำเป็น: ${bi.necessity} | ประเภทการลงทุน: ${bi.investmentType}`)
-  lines.push(`- ระยะเวลา: ${bi.durationYears} ปี (${bi.startYear}–${bi.endYear}) | พื้นที่: ${bi.area || '-'}`)
+  lines.push(`- ระยะเวลา: ${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear}) | พื้นที่: ${bi.area || '-'}`)
   lines.push(`- วงเงินลงทุนทั้งสิ้น: ${n(bi.totalInvestment)} | วงเงินปีนี้: ${n(bi.yearInvestment)} | เป้าเบิกจ่ายปีนี้: ${n(bi.disbursementTarget)}${bi.operatingBudget != null ? ` | งบทำการ: ${n(bi.operatingBudget)}` : ''}`)
   if (bi.workNature) lines.push(`- ลักษณะงาน: ${bi.workNature}`)
   if (bi.approval) lines.push(`- อนุมัติโดย: ${bi.approval}`)
@@ -104,13 +116,14 @@ export function buildAIExport(projects: FlatProject[], groups: ReportGroup[], re
   out.push(`- แหล่งเงิน (source) มี 3 แหล่ง: เงินกู้ / เงินรายได้ กฟภ. / เงินสมทบผู้ใช้ไฟ`)
   out.push(`- ตาราง CSV: แถวแรกเป็นชื่อคอลัมน์ คั่นด้วย comma`)
   out.push(`- ส่วน "รายงานคำขอตั้ง" คือแบบฟอร์มเสนอขอตั้งงบประมาณ (แบบ งป.003/004/007/009) ของแต่ละงาน/แผนงาน`)
+  out.push(`- คอลัมน์/บรรทัด "link" คือ URL ไปหน้านั้นในเว็บแอประบบงบประมาณ — เมื่อผู้ใช้ถามถึงโครงการหรือรายงานใด ให้แนบลิงก์นี้กลับไปในคำตอบด้วยเสมอ`)
   out.push(``)
 
   out.push(`## 1. โครงการทั้งหมด (${projects.length} โครงการ)`)
   out.push('```csv')
-  out.push(csvRow(['project_code', 'item_no', 'name', 'division', 'department', 'group', 'project_type', 'start_year']))
+  out.push(csvRow(['project_code', 'item_no', 'name', 'division', 'department', 'group', 'project_type', 'start_year', 'link']))
   for (const p of projects) {
-    out.push(csvRow([p.project_code, p.item_no, p.name, p.division, p.department, p.group_name, p.project_type, p.year]))
+    out.push(csvRow([p.project_code, p.item_no, p.name, p.division, p.department, p.group_name, p.project_type, p.year, projectUrl(p.project_code)]))
   }
   out.push('```')
   out.push(``)

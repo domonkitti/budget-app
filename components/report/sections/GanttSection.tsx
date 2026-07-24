@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import type { ProcurementPlan, ProcurementActivity, ProcurementMonth } from '@/lib/reportTypes'
-import { THAI_MONTHS, fmtMillion, emptyMonths, normDetails } from '@/lib/reportTypes'
+import { THAI_MONTHS, fmtMillion, emptyMonths, normDetails, DEFAULT_PROCUREMENT_GROUP } from '@/lib/reportTypes'
 import { toCleaned, formatDraft } from '@/components/report/NumberInput'
+import GroupNameEditor from '@/components/report/GroupNameEditor'
 
 interface Props {
   data: ProcurementPlan[]
@@ -33,7 +34,7 @@ const PINNED_NAME = 'เบิกจ่าย'
 // pin the same as hand-created rows.
 const isPinnedActivity = (a: ProcurementActivity) => a.name.trim().startsWith(PINNED_NAME)
 
-type FlatRow = { year: number; activity: ProcurementActivity; globalIdx: number; isPinned: boolean; absIdx: number }
+type FlatRow = { year: number; group?: string; activity: ProcurementActivity; globalIdx: number; isPinned: boolean; absIdx: number }
 // di = -1 targets the activity's own months; >= 0 targets details[di].
 type CellKey = { year: number; ai: number; di: number; mi: number }
 
@@ -42,10 +43,11 @@ export default function GanttSection({
   rowStart, rowEnd, isContinuation, continuationLabel, autoSplit, onMeasureOverflow,
 }: Props) {
   const [editingCell, setEditingCell] = useState<CellKey | null>(null)
-  const [dragOver, setDragOver] = useState<{ year: number; idx: number } | null>(null)
+  const [dragOver, setDragOver] = useState<{ year: number; group?: string; idx: number } | null>(null)
+  const [newGroupNameByYear, setNewGroupNameByYear] = useState<Record<number, string>>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const dragSrcRef = useRef<{ year: number; idx: number } | null>(null)
+  const dragSrcRef = useRef<{ year: number; group?: string; idx: number } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const rowsRef = useRef<HTMLDivElement>(null)
 
@@ -55,17 +57,28 @@ export default function GanttSection({
     ? data.filter(p => p.fiscalYear === pinnedYear)
     : [...data].sort((a, b) => a.fiscalYear - b.fiscalYear)
 
-  // Flat, windowable row list built from the FULL (unwindowed) plans above — regular activities
-  // then the pinned "เบิกจ่าย" row, per year, in render order.
+  // Flat, windowable row list built from the FULL (unwindowed) plans above — within each year,
+  // activities are bucketed by group (preserving order of first appearance, undefined group
+  // first), and each group's own "เบิกจ่าย" row (if any) is pinned to the end of that group.
   const flatRows: FlatRow[] = []
   for (const plan of plans) {
-    const pinnedIdx = plan.activities.findIndex(isPinnedActivity)
+    const groupOrder: (string | undefined)[] = []
+    const byGroup = new Map<string | undefined, { activity: ProcurementActivity; globalIdx: number }[]>()
     plan.activities.forEach((activity, globalIdx) => {
-      if (globalIdx === pinnedIdx) return
-      flatRows.push({ year: plan.fiscalYear, activity, globalIdx, isPinned: false, absIdx: flatRows.length })
+      const g = activity.group
+      if (!byGroup.has(g)) { byGroup.set(g, []); groupOrder.push(g) }
+      byGroup.get(g)!.push({ activity, globalIdx })
     })
-    if (pinnedIdx >= 0) {
-      flatRows.push({ year: plan.fiscalYear, activity: plan.activities[pinnedIdx], globalIdx: pinnedIdx, isPinned: true, absIdx: flatRows.length })
+    for (const g of groupOrder) {
+      const entries = byGroup.get(g)!
+      const pinnedEntry = entries.find(e => isPinnedActivity(e.activity))
+      for (const e of entries) {
+        if (e === pinnedEntry) continue
+        flatRows.push({ year: plan.fiscalYear, group: g, activity: e.activity, globalIdx: e.globalIdx, isPinned: false, absIdx: flatRows.length })
+      }
+      if (pinnedEntry) {
+        flatRows.push({ year: plan.fiscalYear, group: g, activity: pinnedEntry.activity, globalIdx: pinnedEntry.globalIdx, isPinned: true, absIdx: flatRows.length })
+      }
     }
   }
   const visibleRows = rowStart != null || rowEnd != null ? flatRows.slice(rowStart ?? 0, rowEnd ?? flatRows.length) : flatRows
@@ -121,8 +134,22 @@ export default function GanttSection({
     onChange(next)
   }
 
-  function saveRegular(year: number, pinnedActivity: ProcurementActivity | null, next: ProcurementActivity[]) {
-    patchPlan(year, p => ({ ...p, activities: pinnedActivity ? [...next, pinnedActivity] : next }))
+  // Replaces one group's regular+pinned activities within a year, leaving every other
+  // group's activities untouched.
+  function saveGroupRegular(year: number, group: string | undefined, pinnedActivity: ProcurementActivity | null, next: ProcurementActivity[]) {
+    patchPlan(year, p => {
+      const others = p.activities.filter(a => a.group !== group)
+      return { ...p, activities: [...others, ...next, ...(pinnedActivity ? [pinnedActivity] : [])] }
+    })
+  }
+
+  function renameGroup(year: number, oldName: string | undefined, newName: string) {
+    if (!newName || oldName === newName) return
+    patchPlan(year, p => ({ ...p, activities: p.activities.map(a => a.group === oldName ? { ...a, group: newName } : a) }))
+  }
+
+  function deleteGroup(year: number, name: string | undefined) {
+    patchPlan(year, p => ({ ...p, activities: p.activities.filter(a => a.group !== name) }))
   }
 
   function patchActivity(year: number, globalIdx: number, patch: Partial<ProcurementActivity>) {
@@ -191,12 +218,13 @@ export default function GanttSection({
     }
   }
 
-  function addActivity(year: number, regularActivities: ProcurementActivity[], pinnedActivity: ProcurementActivity | null) {
-    saveRegular(year, pinnedActivity, [...regularActivities, {
+  function addActivity(year: number, group: string | undefined, regularActivities: ProcurementActivity[], pinnedActivity: ProcurementActivity | null) {
+    saveGroupRegular(year, group, pinnedActivity, [...regularActivities, {
       id: `a${Date.now()}`,
       name: 'กิจกรรมใหม่',
       months: emptyMonths(),
       details: [],
+      ...(group ? { group } : {}),
     }])
   }
 
@@ -208,25 +236,25 @@ export default function GanttSection({
     patchActivity(year, globalIdx, { details: normDetails(activity.details).filter((_, j) => j !== di) })
   }
 
-  // Drag reorder (regular activities only)
-  function handleDragStart(e: React.DragEvent, year: number, rIdx: number) {
-    dragSrcRef.current = { year, idx: rIdx }
+  // Drag reorder (regular activities only, scoped to the same year+group)
+  function handleDragStart(e: React.DragEvent, year: number, group: string | undefined, rIdx: number) {
+    dragSrcRef.current = { year, group, idx: rIdx }
     e.dataTransfer.effectAllowed = 'move'
   }
 
-  function handleDragOver(e: React.DragEvent, year: number, rIdx: number) {
+  function handleDragOver(e: React.DragEvent, year: number, group: string | undefined, rIdx: number) {
     e.preventDefault()
-    setDragOver({ year, idx: rIdx })
+    setDragOver({ year, group, idx: rIdx })
   }
 
-  function handleDrop(e: React.DragEvent, year: number, rIdx: number, regularActivities: ProcurementActivity[], pinnedActivity: ProcurementActivity | null) {
+  function handleDrop(e: React.DragEvent, year: number, group: string | undefined, rIdx: number, regularActivities: ProcurementActivity[], pinnedActivity: ProcurementActivity | null) {
     e.preventDefault()
     const src = dragSrcRef.current
-    if (src && src.year === year && src.idx !== rIdx) {
+    if (src && src.year === year && src.group === group && src.idx !== rIdx) {
       const next = [...regularActivities]
       const [removed] = next.splice(src.idx, 1)
       next.splice(rIdx, 0, removed)
-      saveRegular(year, pinnedActivity, next)
+      saveGroupRegular(year, group, pinnedActivity, next)
     }
     dragSrcRef.current = null
     setDragOver(null)
@@ -405,9 +433,15 @@ export default function GanttSection({
           <div ref={rowsRef} className="space-y-6">
             {yearBuckets.map(bucket => {
               const fullPlan = plans.find(p => p.fiscalYear === bucket.year)
-              const pinnedIdxFull = fullPlan ? fullPlan.activities.findIndex(isPinnedActivity) : -1
-              const fullRegularActivities = fullPlan ? fullPlan.activities.filter((_, i) => i !== pinnedIdxFull) : []
-              const fullPinnedActivity = fullPlan && pinnedIdxFull >= 0 ? fullPlan.activities[pinnedIdxFull] : null
+
+              // Sub-bucket this year's visible (windowed) rows by group, preserving order of
+              // first appearance — mirrors EquipmentSection's item buckets.
+              const groupBuckets: { name?: string; rows: FlatRow[] }[] = []
+              bucket.rows.forEach(row => {
+                let gb = groupBuckets.find(b => b.name === row.group)
+                if (!gb) { gb = { name: row.group, rows: [] }; groupBuckets.push(gb) }
+                gb.rows.push(row)
+              })
 
               return (
                 <div key={bucket.year}>
@@ -436,8 +470,32 @@ export default function GanttSection({
                     {isAdmin && <div className="w-5 shrink-0" />}
                   </div>
 
+                  {groupBuckets.map(gb => {
+                    const fullRegularActivities = fullPlan ? fullPlan.activities.filter(a => a.group === gb.name && !isPinnedActivity(a)) : []
+                    const fullPinnedActivity = fullPlan ? fullPlan.activities.find(a => a.group === gb.name && isPinnedActivity(a)) ?? null : null
+
+                    return (
+                  <div key={gb.name ?? '__main'} className="mb-3">
+                    {groupBuckets.length > 1 && (
+                      <div className="flex items-center gap-2 mb-1.5 pl-1">
+                        {isAdmin ? (
+                          <GroupNameEditor name={gb.name ?? DEFAULT_PROCUREMENT_GROUP} onRename={n => renameGroup(bucket.year, gb.name, n)} />
+                        ) : (
+                          <span className="text-xs font-semibold text-gray-500">{gb.name ?? DEFAULT_PROCUREMENT_GROUP}</span>
+                        )}
+                        {isAdmin && rowEnd == null && (
+                          <button
+                            onClick={() => deleteGroup(bucket.year, gb.name)}
+                            className="ml-auto text-xs text-gray-300 hover:text-red-400"
+                            title="ลบตารางนี้"
+                          >
+                            ลบตาราง ×
+                          </button>
+                        )}
+                      </div>
+                    )}
                   <div className="space-y-1.5">
-                    {bucket.rows.map(row => {
+                    {gb.rows.map(row => {
                       if (row.isPinned) {
                         const details = normDetails(row.activity.details)
                         const hasDetails = details.length > 0
@@ -490,9 +548,9 @@ export default function GanttSection({
                         <div
                           key={row.activity.id}
                           data-row-i={row.absIdx}
-                          onDragOver={e => handleDragOver(e, row.year, trueRIdx)}
-                          onDrop={e => handleDrop(e, row.year, trueRIdx, fullRegularActivities, fullPinnedActivity)}
-                          className={dragOver?.year === row.year && dragOver.idx === trueRIdx ? 'border-t-2 border-indigo-400' : ''}
+                          onDragOver={e => handleDragOver(e, row.year, row.group, trueRIdx)}
+                          onDrop={e => handleDrop(e, row.year, row.group, trueRIdx, fullRegularActivities, fullPinnedActivity)}
+                          className={dragOver?.year === row.year && dragOver.group === row.group && dragOver.idx === trueRIdx ? 'border-t-2 border-indigo-400' : ''}
                         >
                           <div className="flex items-start gap-2 py-0.5">
                             <div className="w-48 shrink-0">
@@ -500,7 +558,7 @@ export default function GanttSection({
                                 <div className="flex items-start gap-1.5">
                                   <span
                                     draggable={rowEnd == null}
-                                    onDragStart={rowEnd == null ? e => handleDragStart(e, row.year, trueRIdx) : undefined}
+                                    onDragStart={rowEnd == null ? e => handleDragStart(e, row.year, row.group, trueRIdx) : undefined}
                                     onDragEnd={handleDragEnd}
                                     className={`mt-1.5 shrink-0 select-none ${rowEnd == null ? 'cursor-grab active:cursor-grabbing text-gray-200 hover:text-gray-400' : 'text-gray-100 cursor-default'}`}
                                     title={rowEnd == null ? 'ลากเพื่อเรียงลำดับ' : undefined}
@@ -527,7 +585,7 @@ export default function GanttSection({
                             <div className="w-20 shrink-0" />
                             {isAdmin && (
                               <button
-                                onClick={() => saveRegular(row.year, fullPinnedActivity, fullRegularActivities.filter((_, i) => i !== trueRIdx))}
+                                onClick={() => saveGroupRegular(row.year, row.group, fullPinnedActivity, fullRegularActivities.filter((_, i) => i !== trueRIdx))}
                                 className="text-gray-200 hover:text-red-400 p-1 shrink-0"
                               >
                                 <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -549,12 +607,37 @@ export default function GanttSection({
                   </div>
 
                   {isAdmin && rowEnd == null && (
-                    <div className="pt-3">
+                    <div className="pt-2">
                       <button
-                        onClick={() => addActivity(bucket.year, fullRegularActivities, fullPinnedActivity)}
+                        onClick={() => addActivity(bucket.year, gb.name, fullRegularActivities, fullPinnedActivity)}
                         className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors"
                       >
                         + เพิ่มกิจกรรม
+                      </button>
+                    </div>
+                  )}
+                  </div>
+                    )
+                  })}
+
+                  {isAdmin && rowEnd == null && (
+                    <div className="pt-1 flex items-center gap-1.5">
+                      <input
+                        value={newGroupNameByYear[bucket.year] ?? ''}
+                        onChange={e => setNewGroupNameByYear(m => ({ ...m, [bucket.year]: e.target.value }))}
+                        placeholder="ชื่อตารางใหม่ เช่น VT&CT ชุดที่ 2"
+                        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 w-56 outline-none focus:border-indigo-400"
+                      />
+                      <button
+                        onClick={() => {
+                          const name = (newGroupNameByYear[bucket.year] ?? '').trim()
+                          if (!name) return
+                          addActivity(bucket.year, name, [], null)
+                          setNewGroupNameByYear(m => ({ ...m, [bucket.year]: '' }))
+                        }}
+                        className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 border border-dashed border-indigo-300 hover:border-indigo-500 rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap"
+                      >
+                        + ตารางย่อยใหม่
                       </button>
                     </div>
                   )}

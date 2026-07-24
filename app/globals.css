@@ -54,8 +54,14 @@ body {
   .report-print-area .min-h-0 {
     min-height: 0 !important;
   }
-  .report-print-area .h-full,
-  .report-print-area .flex-1 {
+  .report-print-area .h-full {
+    height: auto !important;
+  }
+  /* Only the card-body scrollbox wrappers pair flex-1 with min-h-0 (see BudgetSection,
+     GanttSection, etc.) — targeting that combo, not flex-1 alone, keeps this from also
+     hitting unrelated flex-1 uses like the 009 gantt's month-bar cells, which need their
+     real flex-basis sizing to stay spread across the row instead of collapsing to the left. */
+  .report-print-area .flex-1.min-h-0 {
     height: auto !important;
     flex: none !important;
   }

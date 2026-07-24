@@ -3,7 +3,7 @@ import type {
   ProcurementPlan, ProcurementActivity, ProcurementDetail, ProcurementMonth,
   NecessityType, InvestmentType, ProjectStatus,
 } from './reportTypes'
-import { ACTIVE_YEAR } from './reportTypes'
+import { ACTIVE_YEAR, durationYears, emptyHistoryData, emptyCompareTable } from './reportTypes'
 
 export function blankReportData(): ReportData {
   const year = ACTIVE_YEAR
@@ -45,6 +45,8 @@ export function blankReportData(): ReportData {
     },
     budget: { categories: [], reserve: 0, reserveByYear: [] },
     equipment: [],
+    history: emptyHistoryData(),
+    compareTable: emptyCompareTable(),
     procurements: [{
       fiscalYear: year,
       activities: [
@@ -73,16 +75,97 @@ export interface WorkbookDump {
   skippedSheets: string[]
 }
 
+// Some 009 gantt timelines are drawn with floating shapes (e.g. Excel's "Arrow: Left-Right")
+// positioned over a cell instead of a colored cell fill — SheetJS only reads cell values/styles,
+// it never sees these, so we unzip the .xlsx ourselves (it's just a zip of XML) and read each
+// shape's anchor straight out of DrawingML. Returns sheet name -> set of cell addresses covered
+// by at least one shape. Best-effort: any parse failure just yields an empty map, same as a
+// workbook with no shapes at all — the existing fill-color detection still works either way.
+async function findGanttShapeCells(file: File, XLSX: typeof import('xlsx')): Promise<Map<string, Set<string>>> {
+  const result = new Map<string, Set<string>>()
+  try {
+    const JSZip = (await import('jszip')).default
+    const zip = await JSZip.loadAsync(await file.arrayBuffer())
+
+    const tag = (xml: string, re: RegExp) => xml.match(re) ?? []
+    const attr = (t: string, name: string) => t.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1]
+
+    const workbookXml = await zip.file('xl/workbook.xml')?.async('text')
+    const workbookRelsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('text')
+    if (!workbookXml || !workbookRelsXml) return result
+
+    const rIdToSheetName = new Map<string, string>()
+    for (const t of tag(workbookXml, /<sheet\b[^>]*\/>/g)) {
+      const name = attr(t, 'name')
+      const rid = attr(t, 'r:id')
+      if (name && rid) rIdToSheetName.set(rid, name)
+    }
+    const rIdToTarget = new Map<string, string>()
+    for (const t of tag(workbookRelsXml, /<Relationship\b[^>]*\/>/g)) {
+      const id = attr(t, 'Id')
+      const target = attr(t, 'Target')
+      if (id && target) rIdToTarget.set(id, target)
+    }
+
+    for (const [rid, sheetName] of rIdToSheetName) {
+      const sheetTarget = rIdToTarget.get(rid) // e.g. "worksheets/sheet13.xml"
+      const sheetFile = sheetTarget?.split('/').pop()
+      if (!sheetFile) continue
+
+      const sheetRelsXml = await zip.file(`xl/worksheets/_rels/${sheetFile}.rels`)?.async('text')
+      if (!sheetRelsXml) continue
+      const drawingTarget = tag(sheetRelsXml, /<Relationship\b[^>]*\/>/g)
+        .find(t => /\/relationships\/drawing"/.test(t))
+      const drawingPath = drawingTarget && attr(drawingTarget, 'Target')
+      if (!drawingPath) continue
+
+      const drawingXml = await zip.file(`xl/${drawingPath.replace(/^\.\.\//, '')}`)?.async('text')
+      if (!drawingXml) continue
+
+      const cells = new Set<string>()
+      const colRow = (block: string | undefined) => ({
+        col: Number(block?.match(/<xdr:col>(\d+)<\/xdr:col>/)?.[1]),
+        row: Number(block?.match(/<xdr:row>(\d+)<\/xdr:row>/)?.[1]),
+      })
+      const markRange = (from: { col: number; row: number }, to: { col: number; row: number }) => {
+        if (!Number.isFinite(from.col) || !Number.isFinite(from.row)) return
+        for (let r = Math.min(from.row, to.row); r <= Math.max(from.row, to.row); r++) {
+          for (let c = Math.min(from.col, to.col); c <= Math.max(from.col, to.col); c++) {
+            cells.add(XLSX.utils.encode_cell({ r, c }))
+          }
+        }
+      }
+      for (const anchor of tag(drawingXml, /<xdr:twoCellAnchor\b[\s\S]*?<\/xdr:twoCellAnchor>/g)) {
+        const from = colRow(anchor.match(/<xdr:from>([\s\S]*?)<\/xdr:from>/)?.[1])
+        const toBlock = anchor.match(/<xdr:to>([\s\S]*?)<\/xdr:to>/)?.[1]
+        markRange(from, toBlock ? colRow(toBlock) : from)
+      }
+      // oneCellAnchor only carries a size in EMUs, not a column span, so just mark its cell.
+      for (const anchor of tag(drawingXml, /<xdr:oneCellAnchor\b[\s\S]*?<\/xdr:oneCellAnchor>/g)) {
+        const from = colRow(anchor.match(/<xdr:from>([\s\S]*?)<\/xdr:from>/)?.[1])
+        markRange(from, from)
+      }
+
+      if (cells.size) result.set(sheetName, cells)
+    }
+  } catch {
+    // Malformed/unexpected zip structure — fall back to fill-color-only detection.
+  }
+  return result
+}
+
 export async function dumpWorkbookFile(file: File): Promise<WorkbookDump> {
   const XLSX = await import('xlsx')
-  // cellStyles lets us see fill colors — the 009 gantt timeline is drawn with colored
+  // cellStyles lets us see fill colors — the 009 gantt timeline is often drawn with colored
   // empty cells, which we emit as "addr=■" so the model can reconstruct active months.
   const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellStyles: true })
+  const shapeCellsBySheet = await findGanttShapeCells(file, XLSX)
   const sheets: { name: string; text: string; core: boolean }[] = []
   for (const name of wb.SheetNames) {
     const trimmed = name.trim()
     if (SKIP_SHEETS.has(trimmed) || SKIP_PREFIXES.some(p => trimmed.startsWith(p))) continue
     const emitFills = trimmed.startsWith('009')
+    const shapeCells = emitFills ? shapeCellsBySheet.get(name) : undefined
     const ws = wb.Sheets[name]
     const ref = ws['!ref']
     if (!ref) continue
@@ -93,10 +176,9 @@ export async function dumpWorkbookFile(file: File): Promise<WorkbookDump> {
       for (let c = range.s.c; c <= range.e.c; c++) {
         const addr = XLSX.utils.encode_cell({ r, c })
         const cell = ws[addr] as { v?: unknown; s?: { fgColor?: unknown } } | undefined
-        if (cell == null) continue
-        const v = cell.v != null ? String(cell.v).replace(/\s+/g, ' ').trim() : ''
+        const v = cell?.v != null ? String(cell.v).replace(/\s+/g, ' ').trim() : ''
         if (v) cells.push(`${addr}=${v}`)
-        else if (emitFills && cell.s?.fgColor) cells.push(`${addr}=■`)
+        else if (emitFills && (cell?.s?.fgColor || shapeCells?.has(addr))) cells.push(`${addr}=■`)
       }
       if (cells.length) lines.push(cells.join(' | ').slice(0, 600))
     }
@@ -173,7 +255,7 @@ const SCHEMA_EXAMPLE = `{
     "reserve": 0,
     "reserveByYear": []
   },
-  "equipment": [{                // จากแบบ งป.007 — ใช้ year เดียว = fiscalYear ใส่ทุกรายการ
+  "equipment": [{                // จากแบบ งป.007 — ใช้ year เดียว = fiscalYear ใส่ทุกรายการ (ข้ามแถว "รวม..." ดูกติกาข้อ 8)
     "year": 2570,
     "items": [{
       "no": 1,
@@ -186,16 +268,18 @@ const SCHEMA_EXAMPLE = `{
       "priceSource": "",         // แหล่งที่มาของราคา เช่น "ครั้งสุดท้ายเมื่อ...", "ท้องตลาดเฉลี่ย 3 บริษัท"
       "totalAmount": 0,          // วงเงินรวม (ล้านบาท)
       "disbursementByYear": [{ "year": 2568, "amount": 0 }],  // ประมาณจ่ายรายปี (ล้านบาท)
-      "paymentNote": ""          // คำชี้แจง
+      "paymentNote": "",         // คำชี้แจง
+      "group": ""                // ชื่องานย่อย — ใส่เฉพาะเมื่อไฟล์มีชีต 007 มากกว่า 1 ชุด (ดูกติกาข้อ 11) ไม่งั้นเว้นว่าง
     }]
   }],
-  "procurements": [{             // จากแบบ งป.009 — 1 รายการต่อปีงบประมาณที่พบ
+  "procurements": [{             // จากแบบ งป.009 — 1 รายการต่อปีงบประมาณที่พบ (รวมทุกชีต 009 ของปีนั้น)
     "fiscalYear": 2570,
     "activities": [{
       "id": "a1",                // id สั้นๆ ไม่ซ้ำ
       "name": "",                // ชื่อขั้นตอนหลัก เช่น "อนุมัติหลักการ / อนุมัติสเปค" — แถวเบิกจ่ายเงินใช้ชื่อ "เบิกจ่าย" เท่านั้น
       "months": [{ "active": false }],  // 12 ช่องเสมอ index 0 = ม.ค. ... 11 = ธ.ค. — เดือนที่มี ■ ใส่ { "active": true } / แถว "เบิกจ่าย" ใส่ { "active": true, "amount": 22.4 } (ล้านบาท)
-      "details": [{ "name": "", "months": [{ "active": false }] }]  // ขั้นตอนย่อยที่ขึ้นต้นด้วย "-" พร้อม months 12 ช่องของแถวนั้นเอง
+      "details": [{ "name": "", "months": [{ "active": false }] }],  // ขั้นตอนย่อยที่ขึ้นต้นด้วย "-" พร้อม months 12 ช่องของแถวนั้นเอง
+      "group": ""                // ชื่องานย่อย — ต้องตรงกับ group ของ equipment ที่มาจาก 007 ชุดเดียวกัน (ดูกติกาข้อ 11) ไม่งั้นเว้นว่าง
     }]
   }]
 }`
@@ -211,10 +295,22 @@ const COMMON_RULES = `1. หน่วยเงิน: แบบ 003 / 004 / 007 
 4. ค่า enum (necessity, investmentType, status) ต้องตรงกับตัวเลือกใน comment เท่านั้น ถ้าไม่แน่ใจใช้ "อื่นๆ" หรือ "ใหม่"
 5. ข้อมูลที่ไม่พบในฟอร์ม: string ใช้ "" / number ใช้ 0 / array ใช้ []  ห้ามแต่งข้อมูลขึ้นเอง
 6. "months" ต้องมีสมาชิก 12 ตัวเสมอ (ม.ค. ถึง ธ.ค.)
-7. ข้อความยาวที่ถูกตัดเป็นหลายเซลล์/หลายบรรทัด ให้ต่อกันเป็นประโยคเดียว ตัดเส้นประ "....." ทิ้ง`
+7. ข้อความยาวที่ถูกตัดเป็นหลายเซลล์/หลายบรรทัด ให้ต่อกันเป็นประโยคเดียว ตัดเส้นประ "....." ทิ้ง
+8. แถวในแบบ 007 ที่ขึ้นต้นด้วย "รวม" (เช่น "รวมงานจัดหาวีทีและซีที") คือแถวสรุปยอดของกลุ่มรายการก่อนหน้า ไม่ใช่วัสดุจริง
+   ห้ามใส่เป็น equipment item เด็ดขาด — แอประบบคำนวณผลรวมของตารางเองจากรายการจริงทั้งหมดอยู่แล้ว ถ้าใส่แถว "รวม" ปนไปด้วย
+   ยอดรวมจะเพี้ยนเป็น 2 เท่า
+9. ห้ามข้ามหรือสรุปย่อรายการที่มีข้อมูลจริงแม้ตารางจะยาว ต้องแปลงทุกแถว/ทุกเลขลำดับที่ปรากฏให้ครบ ไม่ใช่เลือกมาเฉพาะบางแถว`
 
 const GANTT_RULES = `ขั้นตอนย่อยที่ขึ้นต้นด้วย "-" (เช่น "- ทำสัญญา") ให้เป็น details ของกิจกรรมแม่ (แถวหลักก่อนหน้า) พร้อม months ของแถวย่อยเอง
    แถวเบิกจ่ายเงินให้ใช้ชื่อ "เบิกจ่าย" และใส่จำนวนเงินเป็น amount ของเดือนตามคอลัมน์ที่ตัวเลขอยู่ (ไม่รวมคอลัมน์ "รวม")`
+
+const SUBJOB_GROUP_RULE = `บางไฟล์มีชีต 007 มากกว่า 1 ชุด (เช่น "007 (1)", "007 (2)") แต่ละชุดมักมีชีต 009/010-1 ของตัวเองกำกับด้วย
+   (เช่น "009(007-1)", "009(007-2)") — นี่คือสัญญาณว่างานนี้แบ่งเป็นหลายงานย่อย (sub-job) ไม่ใช่รายการซ้ำ
+   ถ้าพบแบบนี้ ให้ตั้งชื่อ "group" ตรงตามชื่อชีตต้นฉบับเลย เช่นชีต "007 (1)" ก็ใช้ group = "007 (1)" — ห้ามเดาแต่งชื่อให้สื่อความหมายเอง
+   (ผู้ใช้ตั้งชื่อใหม่เองได้ทีหลังในหน้าแก้ไขรายงาน) จับคู่ equipment กับ procurement ที่เป็นชุดเดียวกันด้วยเลขชุดในชื่อชีต (เช่น "007-1" ใน "009(007-1)")
+   แล้วใส่ "group" ชื่อเดียวกัน (เช่น "007 (1)") ทั้งฝั่ง equipment item และฝั่ง procurement activity ของชุดนั้น
+   (activities จากหลายชีต 009 ของปีเดียวกันให้รวมอยู่ใน "activities" array เดียวกันของปีนั้น แยกกันด้วย "group" เท่านั้น)
+   ถ้าไฟล์มีชีต 007/009 เพียงชุดเดียว (กรณีส่วนใหญ่) ห้ามใส่ "group" เลย (เว้นว่างหรือไม่ต้องมี key นี้)`
 
 export function buildExtractionPrompt(dump: string): string {
   return `คุณคือผู้ช่วยแปลงข้อมูลจากแบบฟอร์มคำขอตั้งงบประมาณลงทุน (Excel) ให้เป็น JSON
@@ -228,9 +324,10 @@ ${SCHEMA_EXAMPLE}
 
 กติกาสำคัญ:
 ${COMMON_RULES}
-8. ในแบบ 009 สัญลักษณ์ ■ คือเซลล์ที่ถูกระบายสีเป็น Gantt chart — เทียบคอลัมน์ของ ■ กับแถวหัวตารางเดือน (ม.ค.–ธ.ค.)
+10. ในแบบ 009 สัญลักษณ์ ■ คือเซลล์ที่ถูกระบายสีเป็น Gantt chart — เทียบคอลัมน์ของ ■ กับแถวหัวตารางเดือน (ม.ค.–ธ.ค.)
    แล้วใส่ { "active": true } ให้เดือนนั้นของแถวนั้น
    ${GANTT_RULES}
+11. ${SUBJOB_GROUP_RULE}
 
 ข้อมูลจากไฟล์:
 
@@ -252,8 +349,9 @@ ${SCHEMA_EXAMPLE}
 
 กติกาสำคัญ:
 ${COMMON_RULES}
-8. ในแบบ 009 ตาราง Gantt ใช้การระบายสีช่องเดือน — เดือนที่ถูกระบายสีให้ใส่ { "active": true } ของแถวนั้น
-   ${GANTT_RULES}`
+10. ในแบบ 009 ตาราง Gantt ใช้การระบายสีช่องเดือน — เดือนที่ถูกระบายสีให้ใส่ { "active": true } ของแถวนั้น
+   ${GANTT_RULES}
+11. ${SUBJOB_GROUP_RULE}`
 }
 
 /* ---------- normalization of the model's JSON reply ---------- */
@@ -312,19 +410,59 @@ const NECESSITIES: NecessityType[] = ['สัญญาผูกพัน', 'น�
 const INVESTMENT_TYPES: InvestmentType[] = ['ก่อสร้างขยายเขต', 'บำรุงรักษาระบบไฟฟ้า', 'IT', 'ติดตั้งศูนย์สั่งการ', 'จัดหาที่ดินอาคาร', 'พัฒนาระบบสื่อสาร', 'อื่นๆ']
 const STATUSES: ProjectStatus[] = ['ต่อเนื่อง', 'ใหม่']
 
+type ExtractResult = { ok: true; text: string } | { ok: false; reason: 'none' | 'truncated' }
+
+// Finds the FIRST balanced {...} object, tracking brace depth and skipping braces inside
+// string literals. A naive "first { to last }" regex breaks whenever the pasted text has
+// anything past the JSON — a duplicated paste (two full objects back-to-back), trailing
+// prose from the copilot, etc. — since it would grab everything up to whatever '}' happens
+// to be last, producing multiple top-level values that JSON.parse always rejects.
+function extractFirstJsonObject(text: string): ExtractResult {
+  const start = text.indexOf('{')
+  if (start < 0) return { ok: false, reason: 'none' }
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') { inString = true; continue }
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return { ok: true, text: text.slice(start, i + 1) }
+    }
+  }
+  return { ok: false, reason: 'truncated' }
+}
+
 /** Extract the JSON object from the copilot's reply (tolerates code fences / prose) and
  *  normalize it into a valid ReportData, falling back to blank defaults per field. */
 export function parseModelJson(text: string): ReportData {
-  const match = text.match(/\{[\s\S]*\}/)
-  if (!match) throw new Error('ไม่พบ JSON ในข้อความที่วาง')
+  const extracted = extractFirstJsonObject(text)
+  if (!extracted.ok) {
+    throw new Error(
+      extracted.reason === 'truncated'
+        ? 'JSON ปิดวงเล็บไม่ครบ — คำตอบอาจถูกตัดก่อนจบ (ยาวเกินไป) ลองขอให้ copilot ตอบสั้นลงหรือแบ่งเป็นหลายส่วน'
+        : 'ไม่พบ JSON ในข้อความที่วาง'
+    )
+  }
   let raw: Record<string, unknown>
   try {
-    raw = JSON.parse(match[0])
+    raw = JSON.parse(extracted.text)
   } catch {
-    // Copying from a chat UI often leaks markdown escapes like \[ \] \_ \* into the
-    // text — invalid JSON escapes, so stripping the backslash is always safe.
+    // Copying from a chat UI often leaks stray backslashes into the text — markdown escapes
+    // like \[ \] \_ \*, or odder ones from whatever mangled the copy (e.g. \& turning up in
+    // front of a plain ampersand). Any backslash JSON doesn't recognize as a real escape
+    // (\" \\ \/ \b \f \n \r \t \u) is one of these leaks, not intentional — dropping it and
+    // keeping the character after it is always safe.
     try {
-      raw = JSON.parse(match[0].replace(/\\([[\]_*#~()>-])/g, '$1'))
+      raw = JSON.parse(extracted.text.replace(/\\(?!["\\/bfnrtu])/g, ''))
     } catch {
       throw new Error('JSON ไม่ถูกต้อง — ลองให้ copilot ตอบใหม่เป็น JSON ล้วนๆ')
     }
@@ -337,6 +475,8 @@ export function parseModelJson(text: string): ReportData {
   const bg = (raw.budget ?? {}) as Record<string, unknown>
 
   const fiscalYear = num(raw.fiscalYear, base.fiscalYear)
+  const startYear = num(bi.startYear, fiscalYear)
+  const endYear = num(bi.endYear, fiscalYear)
 
   const basicInfo: BasicInfo = {
     responsible: {
@@ -352,9 +492,9 @@ export function parseModelJson(text: string): ReportData {
     approval: str(bi.approval),
     workNature: str(bi.workNature),
     area: str(bi.area),
-    durationYears: num(bi.durationYears, 1),
-    startYear: num(bi.startYear, fiscalYear),
-    endYear: num(bi.endYear, fiscalYear),
+    durationYears: durationYears(startYear, endYear),
+    startYear,
+    endYear,
     totalInvestment: num(bi.totalInvestment),
     yearInvestment: num(bi.yearInvestment),
     disbursementTarget: num(bi.disbursementTarget),
@@ -389,7 +529,7 @@ export function parseModelJson(text: string): ReportData {
       }).filter(c => c.name)
     : []
 
-  const equipment: EquipmentYear[] = Array.isArray(raw.equipment)
+  const equipmentBlocks: EquipmentYear[] = Array.isArray(raw.equipment)
     ? (raw.equipment as unknown[]).map(y => {
         const ey = (y ?? {}) as Record<string, unknown>
         const items: EquipmentItem[] = Array.isArray(ey.items)
@@ -407,14 +547,23 @@ export function parseModelJson(text: string): ReportData {
                 totalAmount: num(item.totalAmount),
                 disbursementByYear: yearAmounts(item.disbursementByYear),
                 paymentNote: str(item.paymentNote),
+                ...(str(item.group) ? { group: str(item.group) } : {}),
               }
             }).filter(it => it.description)
           : []
         return { year: num(ey.year, fiscalYear), items }
       }).filter(y => y.items.length)
     : []
+  // The model sometimes emits one equipment block per sub-job group instead of merging them
+  // into a single per-year block (EquipmentYear is keyed by year — the editor picks the first
+  // block matching a given year, so a second same-year block silently disappears from the UI).
+  // Merge same-year blocks here so nothing gets lost regardless of how the model split it.
+  const equipment: EquipmentYear[] = [...equipmentBlocks
+    .reduce((byYear, ey) => byYear.set(ey.year, [...(byYear.get(ey.year) ?? []), ...ey.items]), new Map<number, EquipmentItem[]>())
+    .entries()]
+    .map(([year, items]) => ({ year, items }))
 
-  const procurements: ProcurementPlan[] = Array.isArray(raw.procurements)
+  const procurementBlocks: ProcurementPlan[] = Array.isArray(raw.procurements)
     ? (raw.procurements as unknown[]).map((p, pi) => {
         const plan = (p ?? {}) as Record<string, unknown>
         const activities: ProcurementActivity[] = Array.isArray(plan.activities)
@@ -429,12 +578,31 @@ export function parseModelJson(text: string): ReportData {
                 name,
                 months: parseMonths(act.months),
                 details: parseDetails(act.details),
+                ...(str(act.group) ? { group: str(act.group) } : {}),
               }
             })
           : []
         return { fiscalYear: num(plan.fiscalYear, fiscalYear), activities }
       }).filter(p => p.activities.length)
     : []
+  // Same fix as equipment, for the same reason — ProcurementPlan is keyed by fiscalYear.
+  // Activity ids are only required to be unique within their own block, so a collision after
+  // merging (e.g. two groups both using "a1") gets a suffix instead of silently overwriting.
+  const procurements: ProcurementPlan[] = [...procurementBlocks
+    .reduce((byYear, p) => {
+      const existing = byYear.get(p.fiscalYear) ?? []
+      const existingIds = new Set(existing.map(a => a.id))
+      const activities = p.activities.map(a => {
+        if (!existingIds.has(a.id)) { existingIds.add(a.id); return a }
+        let id = a.id, n = 2
+        while (existingIds.has(id)) id = `${a.id}-${n++}`
+        existingIds.add(id)
+        return { ...a, id }
+      })
+      return byYear.set(p.fiscalYear, [...existing, ...activities])
+    }, new Map<number, ProcurementActivity[]>())
+    .entries()]
+    .map(([fiscalYear, activities]) => ({ fiscalYear, activities }))
 
   return {
     projectName: str(raw.projectName),
@@ -450,6 +618,8 @@ export function parseModelJson(text: string): ReportData {
       reserveByYear: yearAmounts(bg.reserveByYear),
     },
     equipment,
+    history: base.history,
+    compareTable: base.compareTable,
     procurements: procurements.length ? procurements : base.procurements,
   }
 }

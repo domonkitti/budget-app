@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { BasicInfo } from '@/lib/reportTypes'
+import { durationYears } from '@/lib/reportTypes'
 
 interface Props {
   basicInfo: BasicInfo
@@ -48,7 +49,7 @@ export default function BasicInfoSection({ basicInfo: bi, isAdmin, hiddenFields,
           <div className="space-y-2">
             <Row label="ลักษณะงาน" value={bi.workNature} isAdmin={isAdmin} onSave={v => onChange?.({ workNature: v })} />
             <Row label="พื้นที่" value={bi.area} isAdmin={isAdmin} onSave={v => onChange?.({ area: v })} />
-            <Row label="ระยะเวลา" value={`${bi.durationYears} ปี (${bi.startYear}–${bi.endYear})`} />
+            <Row label="ระยะเวลา" value={`${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear})`} />
           </div>
         </Field>
 

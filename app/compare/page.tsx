@@ -21,11 +21,11 @@ import type { FlatProject, Snapshot, SourceYearEntry } from "@/lib/types"
 type Mode = "project" | "department" | "overall"
 
 const METRICS = [
-  { key: "budget_invest", label: "วงเงิน/ลงทุน" },
   { key: "budget_commit", label: "วงเงิน/ผูกพัน" },
+  { key: "budget_invest", label: "วงเงิน/ลงทุน" },
   { key: "budget_total",  label: "วงเงิน/รวม" },
-  { key: "target_invest", label: "เป้า/ลงทุน" },
   { key: "target_commit", label: "เป้า/ผูกพัน" },
+  { key: "target_invest", label: "เป้า/ลงทุน" },
   { key: "target_total",  label: "เป้า/รวม" },
   { key: "remain",        label: "คงเหลือ" },
   { key: "pct",           label: "% ใช้จ่าย" },
@@ -666,7 +666,7 @@ function OverallCompare() {
 
         {!loading && displayYears.length > 0 && (
           <div ref={scrollRef1} className="bg-white rounded-xl border overflow-x-auto">
-            <div className="p-4 border-b flex items-center gap-3">
+            <div className="p-4 border-b flex items-center gap-3 sticky left-0 z-10 bg-white">
               <h3 className="text-sm font-semibold text-gray-600">สรุปงบประมาณ ปี {displayYears.join(" · ")}</h3>
               <span className="text-xs text-gray-400">หน่วย: ล้านบาท</span>
             </div>
@@ -682,9 +682,10 @@ function OverallCompare() {
                   return (
                     <Fragment key={type}>
                       <tr>
-                        <td colSpan={totalCols} className="py-1.5 px-3 text-xs font-semibold" style={{ background: colors.bg, color: colors.text }}>
+                        <td className="py-1.5 px-3 text-xs font-semibold sticky left-0 z-10" style={{ background: colors.bg, color: colors.text, width: LABEL_W, minWidth: LABEL_W }}>
                           {OV_TYPE_LABELS[type] ?? type}
                         </td>
+                        <td colSpan={totalCols - 1} style={{ background: colors.bg }}></td>
                       </tr>
                       {allSources.map(source => (
                         <tr key={source} className="border-b border-gray-50">
@@ -757,7 +758,7 @@ function OverallCompare() {
 
         {!loading && displayYears.length > 0 && diffProjects.length > 0 && (
           <div ref={scrollRef2} className="bg-white rounded-xl border overflow-x-auto">
-            <div className="p-4 border-b flex items-center gap-3">
+            <div className="p-4 border-b flex items-center gap-3 sticky left-0 z-10 bg-white">
               <h3 className="text-sm font-semibold text-gray-600">รายการที่เปลี่ยนแปลง</h3>
               <span className="text-xs text-gray-400">{diffProjects.length} รายการ · หน่วย: ล้านบาท</span>
             </div>
@@ -865,9 +866,9 @@ function ProjectDeptCompare() {
 
   const activeMetrics = useMemo(() => {
     const raw = params.get("metrics")
-    if (!raw) return new Set(["budget_invest", "target_invest"])
+    if (!raw) return new Set(["budget_invest", "target_total"])
     const valid = raw.split(",").filter(k => METRICS.some(m => m.key === k))
-    return new Set(valid.length ? valid : ["budget_invest", "target_invest"])
+    return new Set(valid.length ? valid : ["budget_invest", "target_total"])
   }, [params])
 
   const selectedYears = useMemo(() => {
@@ -1066,32 +1067,16 @@ function ProjectDeptCompare() {
               compared against a different version of itself across groups */}
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-400 font-medium" title="Items you drag in are tagged with this source">Add from:</span>
-            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-              <button
-                type="button"
-                onClick={() => setUrl({ source: "live" })}
-                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
-                  sourceParam === "live" ? "bg-white shadow text-gray-700" : "text-gray-400 hover:text-gray-600"
-                }`}
-              >
-                Live
-              </button>
-              {snapshots.map(s => {
-                const key = `snap-${s.id}`
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setUrl({ source: key })}
-                    className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
-                      sourceParam === key ? "bg-white shadow text-gray-700" : "text-gray-400 hover:text-gray-600"
-                    }`}
-                  >
-                    {s.label}
-                  </button>
-                )
-              })}
-            </div>
+            <select
+              value={sourceParam}
+              onChange={e => setUrl({ source: e.target.value })}
+              className="border rounded-lg px-2 py-1 text-xs text-gray-700"
+            >
+              <option value="live">Live</option>
+              {snapshots.map(s => (
+                <option key={s.id} value={`snap-${s.id}`}>{s.label}</option>
+              ))}
+            </select>
           </div>
 
           <span className="text-xs text-gray-400">

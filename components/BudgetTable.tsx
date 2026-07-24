@@ -1256,7 +1256,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           style={{
             width: "100%",
             minWidth: "max-content",
-            borderCollapse: "collapse",
+            borderCollapse: "separate",
+            borderSpacing: 0,
             fontSize: 12,
             color: "#374151",
           }}

@@ -147,10 +147,6 @@ export default function ProjectPage() {
 }
 
 function ProjectEditor({ code }: { code: string }) {
-  const { viewMode } = useViewMode()
-  const isScenario = viewMode.kind === "scenario"
-  const scenarioId = isScenario ? viewMode.item.id : null
-
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -183,6 +179,9 @@ function ProjectEditor({ code }: { code: string }) {
 
   // Budget source row visibility
   const [showAllSources, setShowAllSources] = useState(false)
+
+  // Metric table breakdown dimension
+  const [metricBreakdown, setMetricBreakdown] = useState<"source" | "subjob">("source")
 
   // Year range toggle
   const [showAllYears, setShowAllYears] = useState(false)
@@ -252,18 +251,14 @@ function ProjectEditor({ code }: { code: string }) {
 
   const load = useCallback(async () => {
     try {
-      const p = isScenario && scenarioId != null
-        ? await api.scenarioProjectDetail(scenarioId, code)
-        : await api.projectDetail(code)
-      setProject(p)
+      setProject(await api.projectDetail(code))
     } catch (e: unknown) { setError(String(e)) }
     finally { setLoading(false) }
-  }, [code, isScenario, scenarioId])
+  }, [code])
 
   const loadHistory = useCallback(async () => {
-    if (isScenario) return
     try { setHistory(await api.projectHistory(code)) } catch {}
-  }, [code, isScenario])
+  }, [code])
 
   useEffect(() => { setProject(null); setLoading(true); setPending(new Map()); setPendingNew(new Map()); setUndoKeys(new Set()); setDirectEditCells(new Set()); setNewSjNames([]); setDeletedSjNames(new Set()); setSjMgmtOpen(false); setYearRangeStart(0); setYearRangeEnd(0); load() }, [load])
   useEffect(() => { loadHistory() }, [loadHistory])
@@ -724,54 +719,44 @@ function ProjectEditor({ code }: { code: string }) {
   async function saveAll() {
     setSaving(true)
     try {
-      if (isScenario && scenarioId != null) {
-        await Promise.all([...pending.entries()].map(([key, p]) => {
-          const [prefix, idStr] = key.split("-")
-          const id = parseInt(idStr)
-          return prefix === "sj"
-            ? api.updateScenarioSubJob(scenarioId, id, p.budget, p.target, p.cut_transfer, p.under_budget)
-            : api.updateScenarioBudgetSource(scenarioId, id, p.budget, p.target, p.cut_transfer, p.under_budget)
-        }))
-      } else {
-        const batchId = crypto.randomUUID()
-        const sjUpdates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }> = []
-        const bsUpdates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }> = []
-        for (const [key, p] of pending) {
-          const [prefix, idStr] = key.split("-")
-          const id = parseInt(idStr)
-          if (prefix === "sj") {
-            const row = project!.sub_jobs.find(r => r.id === id)
-            if (row && deletedSjNames.has(row.name)) continue
-            sjUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
-          } else {
-            bsUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
-          }
+      const batchId = crypto.randomUUID()
+      const sjUpdates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }> = []
+      const bsUpdates: Array<{ id: number; budget: number; target: number; cut_transfer: number; under_budget: number }> = []
+      for (const [key, p] of pending) {
+        const [prefix, idStr] = key.split("-")
+        const id = parseInt(idStr)
+        if (prefix === "sj") {
+          const row = project!.sub_jobs.find(r => r.id === id)
+          if (row && deletedSjNames.has(row.name)) continue
+          sjUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
+        } else {
+          bsUpdates.push({ id, budget: p.budget, target: p.target, cut_transfer: p.cut_transfer, under_budget: p.under_budget })
         }
-        const newSjs = [...pendingNew.values()]
-          .filter(nr => nr.prefix === "sj"
-            && nr.name_or_source !== DEFAULT_VIRTUAL_SJ_NAME
-            && !deletedSjNames.has(nr.name_or_source))
-          .map(nr => ({
-            project_id: nr.project_id, name: nr.name_or_source, sort_order: nr.sort_order,
-            fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
-            cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
-          }))
-        const newBss = [...pendingNew.values()].filter(nr => nr.prefix === "bs").map(nr => ({
-          project_id: nr.project_id, source: nr.name_or_source,
+      }
+      const newSjs = [...pendingNew.values()]
+        .filter(nr => nr.prefix === "sj"
+          && nr.name_or_source !== DEFAULT_VIRTUAL_SJ_NAME
+          && !deletedSjNames.has(nr.name_or_source))
+        .map(nr => ({
+          project_id: nr.project_id, name: nr.name_or_source, sort_order: nr.sort_order,
           fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
           cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
         }))
-        const deletedNames = [...deletedSjNames].map(name => ({ project_id: project!.id, name }))
-        await api.batchSave({
-          batch_id: batchId,
-          batch_comment: saveComment.trim(),
-          sub_job_updates: sjUpdates,
-          budget_source_updates: bsUpdates,
-          new_sub_jobs: newSjs,
-          new_budget_sources: newBss,
-          deleted_sub_job_names: deletedNames.length > 0 ? deletedNames : undefined,
-        })
-      }
+      const newBss = [...pendingNew.values()].filter(nr => nr.prefix === "bs").map(nr => ({
+        project_id: nr.project_id, source: nr.name_or_source,
+        fund_type: nr.fund_type, data_year: nr.data_year, budget: nr.budget, target: nr.target,
+        cut_transfer: nr.cut_transfer, under_budget: nr.under_budget,
+      }))
+      const deletedNames = [...deletedSjNames].map(name => ({ project_id: project!.id, name }))
+      await api.batchSave({
+        batch_id: batchId,
+        batch_comment: saveComment.trim(),
+        sub_job_updates: sjUpdates,
+        budget_source_updates: bsUpdates,
+        new_sub_jobs: newSjs,
+        new_budget_sources: newBss,
+        deleted_sub_job_names: deletedNames.length > 0 ? deletedNames : undefined,
+      })
       setPending(new Map())
       setPendingNew(new Map())
       setUndoKeys(new Set())
@@ -1328,12 +1313,7 @@ function ProjectEditor({ code }: { code: string }) {
 
   // ── Mode badge ─────────────────────────────────────────────────────────────
 
-  const modeBadge = isScenario ? (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#F5F3FF", border: "1px solid #A78BFA", borderRadius: 6, padding: "1px 8px", fontSize: 11, color: "#5B21B6", fontWeight: 600 }}>
-      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6" }} />
-      WHAT IF: {viewMode.kind === "scenario" ? viewMode.item.label : ""}
-    </span>
-  ) : (
+  const modeBadge = (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 6, padding: "1px 8px", fontSize: 11, color: "#166534", fontWeight: 600 }}>
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#22C55E" }} />
       LIVE
@@ -1413,13 +1393,11 @@ function ProjectEditor({ code }: { code: string }) {
                 <div className="flex items-center gap-2 mb-1">
                   <h1 className="text-xl font-bold text-gray-800">{project.name}</h1>
                   {modeBadge}
-                  {!isScenario && (
-                    <button type="button" onClick={startEditInfo}
-                      title="Edit project info"
-                      style={{ padding: "2px 8px", fontSize: 11, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, cursor: "pointer" }}>
-                      Edit
-                    </button>
-                  )}
+                  <button type="button" onClick={startEditInfo}
+                    title="Edit project info"
+                    style={{ padding: "2px 8px", fontSize: 11, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, cursor: "pointer" }}>
+                    Edit
+                  </button>
                 </div>
                 <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
                   <span className="font-mono">{project.project_code}</span>
@@ -1440,6 +1418,23 @@ function ProjectEditor({ code }: { code: string }) {
       {project && (
         <div style={{ padding: "12px 24px 0", display: "flex", flexDirection: "column", gap: 10 }}>
           <FullPlanCard />
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 font-medium">แยกตาม:</span>
+            <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
+              {(["source", "subjob"] as const).map(mode => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setMetricBreakdown(mode)}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    metricBreakdown === mode ? "bg-indigo-500 text-white" : "text-gray-500 hover:text-gray-700"
+                  }`}
+                >
+                  {mode === "source" ? "แหล่งเงิน" : "งานย่อย"}
+                </button>
+              ))}
+            </div>
+          </div>
           <ProjectMetricsTable
             years={allYears}
             entries={(project.sub_jobs.length > 0 ? project.sub_jobs : project.budget_sources).map(
@@ -1448,15 +1443,19 @@ function ProjectEditor({ code }: { code: string }) {
                 fund_type: e.fund_type,
                 budget: e.budget,
                 target: e.target,
+                cut_transfer: e.cut_transfer,
+                under_budget: e.under_budget,
               })
             )}
-            sourceEntries={project.budget_sources.map(
+            sourceEntries={(metricBreakdown === "source" ? project.budget_sources : project.sub_jobs).map(
               (e): SourceMetricEntry => ({
-                source: e.source,
+                source: metricBreakdown === "source" ? (e as BudgetSource).source : (e as SubJob).name,
                 year: e.data_year,
                 fund_type: e.fund_type,
                 budget: e.budget,
                 target: e.target,
+                cut_transfer: e.cut_transfer,
+                under_budget: e.under_budget,
               })
             )}
           />
@@ -1538,8 +1537,7 @@ function ProjectEditor({ code }: { code: string }) {
               </div>
 
               {/* Sub-job management */}
-              {!isScenario && (
-                <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 8 }}>
                   <button
                     type="button"
                     onClick={() => setSjMgmtOpen(v => !v)}
@@ -1644,7 +1642,6 @@ function ProjectEditor({ code }: { code: string }) {
                     )
                   })()}
                 </div>
-              )}
             </section>
 
             {/* Budget Sources */}
@@ -1670,7 +1667,6 @@ function ProjectEditor({ code }: { code: string }) {
             </section>
 
             {/* History */}
-            {!isScenario && (
               <section>
                 <button
                   type="button"
@@ -1801,7 +1797,6 @@ function ProjectEditor({ code }: { code: string }) {
                   )
                 })()}
               </section>
-            )}
           </>
         )}
       </main>
