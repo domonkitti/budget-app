@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting, AIImportPreviewResult, AIImportApplyResult } from "./types"
 
 const BASE = "/api/v1"
 const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
@@ -193,6 +193,10 @@ export const api = {
   importDiff: (code: string) => get<ProjectDiff>(`/import/project/${code}/diff`),
   importAccept: (code: string) => post<{ ok: boolean; project_code: string; po_version: number }>(`/import/project/${code}/accept`, {}),
   importLog: () => get<ImportLog[]>("/import/log"),
+
+  // AI import (paste-JSON bulk import from "9 ช่อง" / "งบโครงการ" tables)
+  importAIPreview: (batch: unknown) => post<AIImportPreviewResult>("/import/ai/preview", batch),
+  importAIApply: (batch: unknown) => post<AIImportApplyResult>("/import/ai/apply", batch),
 
   // Project overview
   projectOverview: (year?: number) =>

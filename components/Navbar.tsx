@@ -173,6 +173,25 @@ export default function Navbar() {
         {/* Buttons + dropdowns share one ref for outside-click */}
         <div ref={ref} style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 6, position: "relative" }}>
 
+          {/* ── AI import button ── */}
+          <Link
+            href="/import/ai"
+            prefetch={false}
+            title="วางผลลัพธ์ JSON จาก copilot เพื่อนำเข้าโครงการ/งบประมาณเป็นชุด"
+            style={{
+              ...btnBase,
+              textDecoration: "none",
+              background: path.startsWith("/import/ai") ? "#EFF6FF" : "#F9FAFB",
+              color: path.startsWith("/import/ai") ? "#1D4ED8" : "#6B7280",
+              borderColor: path.startsWith("/import/ai") ? "#93C5FD" : "#E5E7EB",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M3 3a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm6.293 3.293a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 9.414V17a1 1 0 11-2 0V9.414L7.707 10.707a1 1 0 01-1.414-1.414l3-3z" />
+            </svg>
+            AI Import
+          </Link>
+
           {/* ── AI export button ── */}
           <button
             type="button"

@@ -230,6 +230,70 @@ export type ProjectDetail = Project & {
   budget_sources: BudgetSource[]
 }
 
+export type AIImportNeedsReview = {
+  row_key: number
+  item_no: string
+  reason: string
+}
+
+export type AIImportPreviewItem = {
+  row_key: number
+  item_no: string
+  name: string
+  year: number
+  project_type: string
+  division: string | null
+  department: string | null
+  project_group: string | null
+  matched_code?: string
+  sub_job_count: number
+  budget_source_count: number
+  old_budget_committed: number
+  old_budget_invest: number
+  new_budget_committed: number
+  new_budget_invest: number
+}
+
+export type AIImportCompareRow = {
+  project_type: string
+  old_budget_committed: number
+  old_budget_invest: number
+  old_target_committed: number
+  old_target_invest: number
+  new_budget_committed: number
+  new_budget_invest: number
+  new_target_committed: number
+  new_target_invest: number
+}
+
+export type AIImportYearTotal = {
+  year: number
+  project_count: number
+  budget: number
+}
+
+export type AIImportPreviewResult = {
+  items: AIImportPreviewItem[]
+  needs_review: AIImportNeedsReview[]
+  summary?: unknown
+  comparison: AIImportCompareRow[]
+  db_year_totals: AIImportYearTotal[]
+}
+
+export type AIImportApplyResultItem = {
+  row_key: number
+  item_no: string
+  name: string
+  project_code: string
+  action: 'created' | 'updated'
+}
+
+export type AIImportApplyResult = {
+  results: AIImportApplyResultItem[]
+  created: number
+  updated: number
+}
+
 export type ProjectOverviewItem = {
   project_code: string
   name: string
