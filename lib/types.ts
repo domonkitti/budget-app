@@ -309,6 +309,50 @@ export type AIImportApplyResult = {
   deleted_codes?: string[]
 }
 
+// AI Import 2 — separate year-carryover matching workflow (/import/ai2),
+// independent of the AIImport* types above which back /import/ai.
+export type AIImport2Group = 'matched' | 'new' | 'needs_check'
+
+export type AIImport2Item = {
+  row_key: number
+  item_no: string
+  name: string
+  year: number
+  project_type: string
+  division: string | null
+  department: string | null
+  project_group: string | null
+  group: AIImport2Group
+  matched_code?: string
+  sub_job_count: number
+  budget_source_count: number
+  old_budget_committed: number
+  old_budget_invest: number
+  new_budget_committed: number
+  new_budget_invest: number
+}
+
+export type AIImport2CarryoverCandidate = {
+  project_code: string
+  item_no: string
+  name: string
+  project_type: string
+  year: number
+  remaining: number
+}
+
+export type AIImport2PreviewResult = {
+  items: AIImport2Item[]
+  needs_review: AIImportNeedsReview[]
+  carryover_candidates: AIImport2CarryoverCandidate[]
+}
+
+export type AIImport2ApplyResult = {
+  results: AIImportApplyResultItem[]
+  created: number
+  updated: number
+}
+
 export type ProjectOverviewItem = {
   project_code: string
   name: string

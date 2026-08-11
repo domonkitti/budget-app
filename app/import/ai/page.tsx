@@ -390,9 +390,14 @@ export default function AIImportPage() {
     <div className="p-8 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-semibold">นำเข้าข้อมูลด้วย AI (วางจาก copilot)</h1>
-        <Link href="/import" className="text-sm text-blue-600 hover:underline">
-          นำเข้าจาก PO →
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link href="/import/ai2" className="text-sm text-amber-600 hover:underline">
+            ลอง AI 2 (จับคู่ปีต่อปี) →
+          </Link>
+          <Link href="/import" className="text-sm text-blue-600 hover:underline">
+            นำเข้าจาก PO →
+          </Link>
+        </div>
       </div>
       <p className="text-sm text-gray-500 mb-3">
         แต่ละไฟล์/ก้อนข้อความคือผลลัพธ์ JSON ของ <strong>หนึ่งปี</strong> (copilot อ่านทีละปีเท่านั้น) อัปโหลดหรือวางได้หลายปีพร้อมกัน
