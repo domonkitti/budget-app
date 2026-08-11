@@ -25,34 +25,52 @@ function baseType(t: string): string {
   return t === "CY" ? "Y" : t === "CC" ? "C" : t
 }
 
-type CompareRow = { project_type: string; oldC: number; oldI: number; newC: number; newI: number }
+// TYPE_ORDER pins the summary table's row order to งานรายปี → แผนระยะยาว →
+// สัญญาเช่า (Y, C, L) instead of alphabetical — anything unrecognized sorts last.
+const TYPE_ORDER = ["Y", "C", "L", "P"]
+function typeRank(t: string): number {
+  const i = TYPE_ORDER.indexOf(t)
+  return i === -1 ? TYPE_ORDER.length : i
+}
 
-// computeComparison sums every item's old/new budget (regardless of group —
-// a "needs_check" row still becomes a new project on Apply if nobody
-// matches it, so it counts too) grouped by type. Computed from the exact
-// same `items` array the detail tables below render, so this summary can
-// never show a different picture than what's actually about to happen.
+type CompareVals = { oldC: number; oldI: number; newC: number; newI: number }
+type CompareRow = { project_type: string; budget: CompareVals; target: CompareVals }
+
+// computeComparison sums every item's old/new budget AND target (regardless
+// of group — a "needs_check" row still becomes a new project on Apply if
+// nobody matches it, so it counts too) grouped by type. Computed from the
+// exact same `items` array the detail tables below render, so this summary
+// can never show a different picture than what's actually about to happen.
 function computeComparison(items: AIImport2Item[]): CompareRow[] {
   const agg = new Map<string, CompareRow>()
   for (const it of items) {
     const t = baseType(it.project_type)
-    const row = agg.get(t) ?? { project_type: t, oldC: 0, oldI: 0, newC: 0, newI: 0 }
-    row.oldC += it.old_budget_committed
-    row.oldI += it.old_budget_invest
-    row.newC += it.new_budget_committed
-    row.newI += it.new_budget_invest
+    const row = agg.get(t) ?? {
+      project_type: t,
+      budget: { oldC: 0, oldI: 0, newC: 0, newI: 0 },
+      target: { oldC: 0, oldI: 0, newC: 0, newI: 0 },
+    }
+    row.budget.oldC += it.old_budget_committed
+    row.budget.oldI += it.old_budget_invest
+    row.budget.newC += it.new_budget_committed
+    row.budget.newI += it.new_budget_invest
+    row.target.oldC += it.old_target_committed
+    row.target.oldI += it.old_target_invest
+    row.target.newC += it.new_target_committed
+    row.target.newI += it.new_target_invest
     agg.set(t, row)
   }
-  return [...agg.values()].sort((a, b) => a.project_type.localeCompare(b.project_type))
+  return [...agg.values()].sort((a, b) => typeRank(a.project_type) - typeRank(b.project_type))
 }
 
-function CompareTable2({ rows }: { rows: CompareRow[] }) {
+function CompareTable2({ rows, title, get }: { rows: CompareRow[]; title: string; get: (r: CompareRow) => CompareVals }) {
   if (rows.length === 0) return null
   const tdNum = "py-1 px-2 text-right tabular-nums text-xs whitespace-nowrap"
   const th = "py-1 px-2 text-right text-xs font-medium text-gray-500 whitespace-nowrap"
-  const grand = rows.reduce((acc, r) => ({
-    oldC: acc.oldC + r.oldC, oldI: acc.oldI + r.oldI, newC: acc.newC + r.newC, newI: acc.newI + r.newI,
-  }), { oldC: 0, oldI: 0, newC: 0, newI: 0 })
+  const grand = rows.reduce((acc, r) => {
+    const v = get(r)
+    return { oldC: acc.oldC + v.oldC, oldI: acc.oldI + v.oldI, newC: acc.newC + v.newC, newI: acc.newI + v.newI }
+  }, { oldC: 0, oldI: 0, newC: 0, newI: 0 })
   const grandOldTotal = grand.oldC + grand.oldI
   const grandNewTotal = grand.newC + grand.newI
   const dColor = (v: number) => v > 0 ? "text-green-600" : v < 0 ? "text-red-600" : "text-gray-300"
@@ -60,7 +78,7 @@ function CompareTable2({ rows }: { rows: CompareRow[] }) {
   return (
     <div className="mb-6 bg-white rounded-xl border p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">สรุปถ้านำเข้าทั้งหมด — วงเงินดำเนินการ เปรียบเทียบก่อน/หลัง</h3>
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">สรุปถ้านำเข้าทั้งหมด — {title} เปรียบเทียบก่อน/หลัง</h3>
         <span className="text-xs text-gray-400">หน่วย:ล้านบาท</span>
       </div>
       <div className="overflow-x-auto">
@@ -79,15 +97,16 @@ function CompareTable2({ rows }: { rows: CompareRow[] }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {rows.map((row) => {
+              const r = get(row)
               const oldTotal = r.oldC + r.oldI
               const newTotal = r.newC + r.newI
               const dC = r.newC - r.oldC
               const dI = r.newI - r.oldI
               const dTotal = newTotal - oldTotal
               return (
-                <tr key={r.project_type} className="border-b border-gray-50">
-                  <td className="py-1 px-2 font-medium text-xs text-gray-700">{TYPE_LABELS[r.project_type] ?? r.project_type}</td>
+                <tr key={row.project_type} className="border-b border-gray-50">
+                  <td className="py-1 px-2 font-medium text-xs text-gray-700">{TYPE_LABELS[row.project_type] ?? row.project_type}</td>
                   <td className={`${tdNum} border-l text-gray-500`}>{fmtM(r.oldC)}</td>
                   <td className={`${tdNum} text-gray-500`}>{fmtM(r.oldI)}</td>
                   <td className={`${tdNum} text-gray-600 font-medium`}>{fmtM(oldTotal)}</td>
@@ -439,7 +458,8 @@ export default function AIImport2Page() {
 
       {preview && !result && (
         <>
-          <CompareTable2 rows={computeComparison(includedItems)} />
+          <CompareTable2 rows={computeComparison(includedItems)} title="วงเงินดำเนินการ" get={(r) => r.budget} />
+          <CompareTable2 rows={computeComparison(includedItems)} title="เป้าหมายเบิกจ่าย" get={(r) => r.target} />
 
           {/* Group-count summary — counts come from the exact same arrays the detail sections below render, so they can never drift apart. */}
           <div className="mb-6 grid grid-cols-4 gap-3">

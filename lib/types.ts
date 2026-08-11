@@ -330,6 +330,10 @@ export type AIImport2Item = {
   old_budget_invest: number
   new_budget_committed: number
   new_budget_invest: number
+  old_target_committed: number
+  old_target_invest: number
+  new_target_committed: number
+  new_target_invest: number
 }
 
 export type AIImport2CarryoverCandidate = {
