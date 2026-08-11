@@ -252,6 +252,9 @@ export type AIImportPreviewItem = {
   old_budget_invest: number
   new_budget_committed: number
   new_budget_invest: number
+  rejected_match_code?: string
+  rejected_match_name?: string
+  rejected_match_similarity?: number
 }
 
 export type AIImportCompareRow = {
@@ -272,12 +275,22 @@ export type AIImportYearTotal = {
   budget: number
 }
 
+export type AIImportMissingProject = {
+  project_code: string
+  item_no: string
+  name: string
+  project_type: string
+  old_budget_committed: number
+  old_budget_invest: number
+}
+
 export type AIImportPreviewResult = {
   items: AIImportPreviewItem[]
   needs_review: AIImportNeedsReview[]
   summary?: unknown
   comparison: AIImportCompareRow[]
   db_year_totals: AIImportYearTotal[]
+  missing_projects: AIImportMissingProject[]
 }
 
 export type AIImportApplyResultItem = {
@@ -292,6 +305,8 @@ export type AIImportApplyResult = {
   results: AIImportApplyResultItem[]
   created: number
   updated: number
+  deleted: number
+  deleted_codes?: string[]
 }
 
 export type ProjectOverviewItem = {
