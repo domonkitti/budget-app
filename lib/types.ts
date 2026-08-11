@@ -337,6 +337,7 @@ export type AIImport2CarryoverCandidate = {
   item_no: string
   name: string
   project_type: string
+  start_year: number
   year: number
   remaining: number
 }

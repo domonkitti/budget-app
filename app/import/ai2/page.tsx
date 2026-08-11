@@ -160,6 +160,7 @@ export default function AIImport2Page() {
   const [raw, setRaw] = useState("")
   const [preview, setPreview] = useState<AIImport2PreviewResult | null>(null)
   const [manualMatches, setManualMatches] = useState<Map<number, string>>(new Map())
+  const [excludedRowKeys, setExcludedRowKeys] = useState<Set<number>>(new Set())
   const [matchPopupRowKey, setMatchPopupRowKey] = useState<number | null>(null)
   const [matchSearch, setMatchSearch] = useState("")
   const [result, setResult] = useState<AIImport2ApplyResult | null>(null)
@@ -183,7 +184,16 @@ export default function AIImport2Page() {
   }
 
   function resetDownstream() {
-    setPreview(null); setManualMatches(new Map()); setResult(null); setError(null); setSnapshotted(false)
+    setPreview(null); setManualMatches(new Map()); setExcludedRowKeys(new Set()); setResult(null); setError(null); setSnapshotted(false)
+  }
+
+  function toggleExcludeRow(rowKey: number) {
+    setExcludedRowKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(rowKey)) next.delete(rowKey)
+      else next.add(rowKey)
+      return next
+    })
   }
 
   async function runPreview(matches: Map<number, string>) {
@@ -236,8 +246,20 @@ export default function AIImport2Page() {
 
   async function handleCheck() {
     if (loaded.length === 0) return
-    setResult(null); setManualMatches(new Map())
+    setResult(null); setManualMatches(new Map()); setExcludedRowKeys(new Set())
     await runPreview(new Map())
+  }
+
+  // filteredBatch drops any project/sub_job/budget_source/needs_review row
+  // whose row_key was excluded via "ไม่นำเข้าข้อมูล" on a ต้องตรวจสอบ row.
+  function filteredBatch(excluded: Set<number>): RawBatch {
+    const merged = mergeBatches(loaded)
+    return {
+      projects: merged.projects?.filter((p) => !excluded.has(p.row_key)),
+      sub_jobs: merged.sub_jobs?.filter((sj) => !excluded.has(sj.row_key)),
+      budget_sources: merged.budget_sources?.filter((bs) => !excluded.has(bs.row_key)),
+      needs_review: merged.needs_review?.filter((nr) => !excluded.has(nr.row_key)),
+    }
   }
 
   function openMatchPopup(rowKey: number) {
@@ -275,12 +297,14 @@ export default function AIImport2Page() {
 
   async function handleImport() {
     if (!preview || loaded.length === 0) return
+    const includedCount = preview.items.filter((it) => !excludedRowKeys.has(it.row_key)).length
+    const excludeWarning = excludedRowKeys.size > 0 ? `\n\nไม่นำเข้า ${excludedRowKeys.size} โครงการที่กด "ไม่นำเข้าข้อมูล"` : ""
     const warning = snapshotted ? "" : "\n\n⚠️ ยังไม่ได้สร้าง snapshot — แนะนำให้สร้างก่อน เผื่อต้องย้อนกลับ"
-    if (!confirm(`นำเข้า ${preview.items.length} โครงการ จาก ${loaded.length} ไฟล์?${warning}`)) return
+    if (!confirm(`นำเข้า ${includedCount} โครงการ จาก ${loaded.length} ไฟล์?${excludeWarning}${warning}`)) return
     setImporting(true)
     setError(null)
     try {
-      const payload = { ...mergeBatches(loaded), manual_matches: Object.fromEntries(manualMatches) }
+      const payload = { ...filteredBatch(excludedRowKeys), manual_matches: Object.fromEntries(manualMatches) }
       setResult(await api.importAI2Apply(payload))
     } catch (e) {
       setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาด")
@@ -307,9 +331,11 @@ export default function AIImport2Page() {
     }
   }
 
-  const matched = preview ? preview.items.filter((it) => it.group === "matched") : []
-  const fresh = preview ? preview.items.filter((it) => it.group === "new") : []
-  const needsCheck = preview ? preview.items.filter((it) => it.group === "needs_check") : []
+  const includedItems = preview ? preview.items.filter((it) => !excludedRowKeys.has(it.row_key)) : []
+  const excludedItems = preview ? preview.items.filter((it) => excludedRowKeys.has(it.row_key)) : []
+  const matched = includedItems.filter((it) => it.group === "matched")
+  const fresh = includedItems.filter((it) => it.group === "new")
+  const needsCheck = includedItems.filter((it) => it.group === "needs_check")
   const carryover = preview ? preview.carryover_candidates : []
 
   return (
@@ -413,7 +439,7 @@ export default function AIImport2Page() {
 
       {preview && !result && (
         <>
-          <CompareTable2 rows={computeComparison(preview.items)} />
+          <CompareTable2 rows={computeComparison(includedItems)} />
 
           {/* Group-count summary — counts come from the exact same arrays the detail sections below render, so they can never drift apart. */}
           <div className="mb-6 grid grid-cols-4 gap-3">
@@ -516,9 +542,16 @@ export default function AIImport2Page() {
             </table>
           </div>
 
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">
-            3. ต้องตรวจสอบ ({needsCheck.length})
-            <span className="font-normal text-gray-400"> — มีวงเงินดำเนินการ/ผูกพัน แต่ไม่พบโครงการปีก่อนที่ชื่อตรงกันเป๊ะ ๆ</span>
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+            <span>
+              3. ต้องตรวจสอบ ({needsCheck.length})
+              <span className="font-normal text-gray-400"> — มีวงเงินดำเนินการ/ผูกพัน แต่ไม่พบโครงการปีก่อนที่ชื่อตรงกันเป๊ะ ๆ</span>
+            </span>
+            {excludedItems.length > 0 && (
+              <button onClick={() => setExcludedRowKeys(new Set())} className="text-xs font-normal text-gray-400 hover:text-gray-600 underline">
+                ไม่นำเข้าแล้ว {excludedItems.length} รายการ — เรียกคืนทั้งหมด
+              </button>
+            )}
           </h2>
           <div className="border rounded-lg overflow-x-auto mb-6">
             <table className="w-full text-sm">
@@ -541,9 +574,18 @@ export default function AIImport2Page() {
                     <td className="px-3 py-2">{it.project_type}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-amber-700 font-medium">{fmt3(it.new_budget_committed)}</td>
                     <td className="px-3 py-2">
-                      <button onClick={() => openMatchPopup(it.row_key)} className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200">
-                        จับคู่กับรายการค้างปีก่อน
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => openMatchPopup(it.row_key)} className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200">
+                          จับคู่กับรายการค้างปีก่อน
+                        </button>
+                        <button
+                          onClick={() => toggleExcludeRow(it.row_key)}
+                          title="ไม่นำเข้าโครงการนี้ — เอาออกจากรายการ ไม่กระทบฐานข้อมูล"
+                          className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100"
+                        >
+                          ไม่นำเข้าข้อมูล
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -563,8 +605,11 @@ export default function AIImport2Page() {
                   <th className="text-left px-3 py-2">รหัสโครงการ</th>
                   <th className="text-left px-3 py-2">ข้อ</th>
                   <th className="text-left px-3 py-2">ชื่อโครงการ</th>
-                  <th className="text-left px-3 py-2" title="ปีที่มียอดผูกพันคงเหลือค้างอยู่ (ไม่ใช่ปีที่โครงการเริ่มต้น — โครงการอาจเริ่มก่อนหน้านี้หลายปีแล้วก็ได้)">
-                    ปี (ของยอดค้าง)
+                  <th className="text-left px-3 py-2" title="ปีที่โครงการนี้เริ่มต้น (projects.year)">
+                    ปีเริ่มต้น
+                  </th>
+                  <th className="text-left px-3 py-2" title="ปีที่มียอดผูกพันคงเหลือค้างอยู่ — อาจต่างจากปีเริ่มต้นได้หลายปี ถ้าโครงการดำเนินมานาน">
+                    ปียอดค้าง
                   </th>
                   <th className="text-right px-3 py-2" title="วงเงินดำเนินการ/ผูกพัน − จ่ายจริง/ผูกพัน − ตัดทิ้ง — ตัวเลขนี้หักตัดทิ้งที่มีอยู่แล้ว ไม่ต้องคำนวณลบเพิ่ม">
                     ผูกพันคงเหลือ (หลังหักตัดทิ้ง)
@@ -578,7 +623,11 @@ export default function AIImport2Page() {
                     <td className="px-3 py-2 font-mono text-xs">{c.project_code}</td>
                     <td className="px-3 py-2 font-mono text-xs">{c.item_no}</td>
                     <td className="px-3 py-2 max-w-md whitespace-normal break-words">{c.name}</td>
-                    <td className="px-3 py-2">{c.year}</td>
+                    <td className="px-3 py-2">{c.start_year}</td>
+                    <td className="px-3 py-2">
+                      {c.year}
+                      {c.year !== c.start_year && <span className="text-xs text-gray-400 ml-1">(+{c.year - c.start_year})</span>}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700 font-medium">{fmt3(c.remaining)}</td>
                     <td className="px-3 py-2">
                       <button
@@ -592,7 +641,7 @@ export default function AIImport2Page() {
                     </td>
                   </tr>
                 ))}
-                {carryover.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
+                {carryover.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
               </tbody>
             </table>
           </div>
