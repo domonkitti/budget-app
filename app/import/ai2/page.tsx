@@ -10,6 +10,115 @@ function fmt3(n: number): string {
   return n.toLocaleString("th-TH", { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 }
 
+function fmtM(n: number) {
+  if (n === 0) return <span className="text-gray-300">-</span>
+  return <>{fmt3(n)}</>
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  Y: "งานรายปี", C: "แผนระยะยาว", L: "สัญญาเช่า", P: "งบโครงการ",
+}
+
+// CY/CC rows update the same project_code as the Y/C project they revise —
+// fold them together for display, same convention baseProjectType uses server-side.
+function baseType(t: string): string {
+  return t === "CY" ? "Y" : t === "CC" ? "C" : t
+}
+
+type CompareRow = { project_type: string; oldC: number; oldI: number; newC: number; newI: number }
+
+// computeComparison sums every item's old/new budget (regardless of group —
+// a "needs_check" row still becomes a new project on Apply if nobody
+// matches it, so it counts too) grouped by type. Computed from the exact
+// same `items` array the detail tables below render, so this summary can
+// never show a different picture than what's actually about to happen.
+function computeComparison(items: AIImport2Item[]): CompareRow[] {
+  const agg = new Map<string, CompareRow>()
+  for (const it of items) {
+    const t = baseType(it.project_type)
+    const row = agg.get(t) ?? { project_type: t, oldC: 0, oldI: 0, newC: 0, newI: 0 }
+    row.oldC += it.old_budget_committed
+    row.oldI += it.old_budget_invest
+    row.newC += it.new_budget_committed
+    row.newI += it.new_budget_invest
+    agg.set(t, row)
+  }
+  return [...agg.values()].sort((a, b) => a.project_type.localeCompare(b.project_type))
+}
+
+function CompareTable2({ rows }: { rows: CompareRow[] }) {
+  if (rows.length === 0) return null
+  const tdNum = "py-1 px-2 text-right tabular-nums text-xs whitespace-nowrap"
+  const th = "py-1 px-2 text-right text-xs font-medium text-gray-500 whitespace-nowrap"
+  const grand = rows.reduce((acc, r) => ({
+    oldC: acc.oldC + r.oldC, oldI: acc.oldI + r.oldI, newC: acc.newC + r.newC, newI: acc.newI + r.newI,
+  }), { oldC: 0, oldI: 0, newC: 0, newI: 0 })
+  const grandOldTotal = grand.oldC + grand.oldI
+  const grandNewTotal = grand.newC + grand.newI
+  const dColor = (v: number) => v > 0 ? "text-green-600" : v < 0 ? "text-red-600" : "text-gray-300"
+  const dStr = (v: number) => v === 0 ? "-" : (v > 0 ? "+" : "") + fmt3(v)
+  return (
+    <div className="mb-6 bg-white rounded-xl border p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">สรุปถ้านำเข้าทั้งหมด — วงเงินดำเนินการ เปรียบเทียบก่อน/หลัง</h3>
+        <span className="text-xs text-gray-400">หน่วย:ล้านบาท</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b text-gray-500">
+              <th className="text-left py-1 px-2 font-medium text-xs" rowSpan={2}>ประเภท</th>
+              <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>เดิม</th>
+              <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>ใหม่</th>
+              <th className="text-center py-1 px-2 font-medium text-xs border-l" colSpan={3}>ผลต่าง</th>
+            </tr>
+            <tr className="border-b text-gray-400">
+              <th className={`${th} border-l`}>ผูกพัน</th><th className={th}>ลงทุน</th><th className={th}>รวม</th>
+              <th className={`${th} border-l`}>ผูกพัน</th><th className={th}>ลงทุน</th><th className={th}>รวม</th>
+              <th className={`${th} border-l`}>ผูกพัน</th><th className={th}>ลงทุน</th><th className={th}>รวม</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const oldTotal = r.oldC + r.oldI
+              const newTotal = r.newC + r.newI
+              const dC = r.newC - r.oldC
+              const dI = r.newI - r.oldI
+              const dTotal = newTotal - oldTotal
+              return (
+                <tr key={r.project_type} className="border-b border-gray-50">
+                  <td className="py-1 px-2 font-medium text-xs text-gray-700">{TYPE_LABELS[r.project_type] ?? r.project_type}</td>
+                  <td className={`${tdNum} border-l text-gray-500`}>{fmtM(r.oldC)}</td>
+                  <td className={`${tdNum} text-gray-500`}>{fmtM(r.oldI)}</td>
+                  <td className={`${tdNum} text-gray-600 font-medium`}>{fmtM(oldTotal)}</td>
+                  <td className={`${tdNum} border-l text-blue-500`}>{fmtM(r.newC)}</td>
+                  <td className={`${tdNum} text-blue-500`}>{fmtM(r.newI)}</td>
+                  <td className={`${tdNum} text-blue-600 font-medium`}>{fmtM(newTotal)}</td>
+                  <td className={`${tdNum} border-l font-medium ${dColor(dC)}`}>{dStr(dC)}</td>
+                  <td className={`${tdNum} font-medium ${dColor(dI)}`}>{dStr(dI)}</td>
+                  <td className={`${tdNum} font-semibold ${dColor(dTotal)}`}>{dStr(dTotal)}</td>
+                </tr>
+              )
+            })}
+            <tr className="bg-gray-100 border-t">
+              <td className="py-1 px-2 font-bold text-xs text-gray-700">รวมทั้งหมด</td>
+              <td className={`${tdNum} border-l font-bold text-gray-700`}>{fmtM(grand.oldC)}</td>
+              <td className={`${tdNum} font-bold text-gray-700`}>{fmtM(grand.oldI)}</td>
+              <td className={`${tdNum} font-bold text-gray-700`}>{fmtM(grandOldTotal)}</td>
+              <td className={`${tdNum} border-l font-bold text-blue-700`}>{fmtM(grand.newC)}</td>
+              <td className={`${tdNum} font-bold text-blue-700`}>{fmtM(grand.newI)}</td>
+              <td className={`${tdNum} font-bold text-blue-700`}>{fmtM(grandNewTotal)}</td>
+              <td className={`${tdNum} border-l font-bold ${dColor(grandNewTotal - grandOldTotal)}`}>{dStr(grand.newC - grand.oldC)}</td>
+              <td className={`${tdNum} font-bold ${dColor(grand.newI - grand.oldI)}`}>{dStr(grand.newI - grand.oldI)}</td>
+              <td className={`${tdNum} font-bold ${dColor(grandNewTotal - grandOldTotal)}`}>{dStr(grandNewTotal - grandOldTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 type RawBatch = {
   projects?: { row_key: number; year?: number }[]
   sub_jobs?: { row_key: number }[]
@@ -304,7 +413,9 @@ export default function AIImport2Page() {
 
       {preview && !result && (
         <>
-          {/* Top summary — counts come from the exact same arrays the detail sections below render, so they can never drift apart. */}
+          <CompareTable2 rows={computeComparison(preview.items)} />
+
+          {/* Group-count summary — counts come from the exact same arrays the detail sections below render, so they can never drift apart. */}
           <div className="mb-6 grid grid-cols-4 gap-3">
             {[
               { n: 1, label: "ตรงกัน", count: matched.length, color: "text-gray-700" },
