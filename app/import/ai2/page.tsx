@@ -564,7 +564,9 @@ export default function AIImport2Page() {
                   <th className="text-left px-3 py-2">ข้อ</th>
                   <th className="text-left px-3 py-2">ชื่อโครงการ</th>
                   <th className="text-left px-3 py-2">ปี</th>
-                  <th className="text-right px-3 py-2">ผูกพันคงเหลือ</th>
+                  <th className="text-right px-3 py-2" title="วงเงินดำเนินการ/ผูกพัน − จ่ายจริง/ผูกพัน − ตัดทิ้ง — ตัวเลขนี้หักตัดทิ้งที่มีอยู่แล้ว ไม่ต้องคำนวณลบเพิ่ม">
+                    ผูกพันคงเหลือ (หลังหักตัดทิ้ง)
+                  </th>
                   <th className="text-left px-3 py-2"></th>
                 </tr>
               </thead>
