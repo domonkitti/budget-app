@@ -481,7 +481,8 @@ export default function AIImport2Page() {
                   <th className="text-left px-3 py-2">รหัสโครงการ</th>
                   <th className="text-left px-3 py-2">ข้อ</th>
                   <th className="text-left px-3 py-2">ชื่อโครงการ</th>
-                  <th className="text-left px-3 py-2">ปี</th>
+                  <th className="text-left px-3 py-2" title="ปีของข้อมูลที่กำลังนำเข้า (ปีเดิม/ปีใหม่ที่เทียบกันด้านขวา คือของปีนี้ทั้งคู่)">ปี</th>
+                  <th className="text-left px-3 py-2" title="ปีที่ใช้ค้นหาโครงการเดิมจนเจอ (ปีนำเข้า − 1) — ถ้าจับคู่ด้วยมือ อาจเป็นปีอื่นก็ได้">จับคู่จากปี</th>
                   <th className="text-left px-3 py-2">ประเภท</th>
                   <th className="text-right px-3 py-2 border-l">วงเงินดำเนินการ (เดิม)</th>
                   <th className="text-right px-3 py-2">วงเงินดำเนินการ (ใหม่)</th>
@@ -504,13 +505,14 @@ export default function AIImport2Page() {
                       <td className="px-3 py-2 font-mono text-xs">{it.item_no}</td>
                       <td className="px-3 py-2 max-w-md whitespace-normal break-words">{it.name}</td>
                       <td className="px-3 py-2">{it.year}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{isManual ? "ด้วยมือ" : it.year - 1}</td>
                       <td className="px-3 py-2">{it.project_type}</td>
                       <td className="px-3 py-2 text-right border-l tabular-nums text-gray-500">{fmt3(oldBudget)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-blue-600 font-medium">{fmt3(newBudget)}</td>
                     </tr>
                   )
                 })}
-                {matched.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
+                {matched.length === 0 && <tr><td colSpan={8} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
               </tbody>
             </table>
           </div>
