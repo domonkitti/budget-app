@@ -341,6 +341,21 @@ function fmtDelta(delta: number) {
     : <span className="text-red-500">({s})</span>
 }
 
+// project_code is regenerated whenever a project row is deleted and
+// re-imported (see Promote/ai_import on the backend), so it isn't a stable
+// join key across sources taken at different times. item_no + base
+// project_type is — same convention as matchProject in ai_import.go —
+// except for placeholder item_no ("", "?1", ...), which carries no real
+// identity and falls back to project_code.
+function baseProjectType(t: string) {
+  return t === "CY" ? "Y" : t === "CC" ? "C" : t
+}
+function projectMatchKey(p: FlatProject): string {
+  const itemNo = p.item_no ?? ""
+  if (itemNo !== "" && !itemNo.startsWith("?")) return `item:${itemNo}:${baseProjectType(p.project_type)}`
+  return `code:${p.project_code}`
+}
+
 function getProjectVals(p: FlatProject, year: number) {
   const entries = p.source_breakdown.filter(e => e.year === year)
   const b_commit = entries.filter(e => e.fund_type === "ผูกพัน").reduce((s, e) => s + e.budget, 0)
@@ -468,13 +483,13 @@ function OverallCompare() {
     if (displayYears.length === 0) return []
     const empty = { b_commit: 0, b_invest: 0, budget: 0, t_commit: 0, t_invest: 0, target: 0, cut: 0, ub: 0 }
     type PV = typeof empty
-    const map1 = new Map(data1.map(p => [p.project_code, p]))
-    const map2 = new Map(data2.map(p => [p.project_code, p]))
-    const codes = new Set([...map1.keys(), ...map2.keys()])
+    const map1 = new Map(data1.map(p => [projectMatchKey(p), p]))
+    const map2 = new Map(data2.map(p => [projectMatchKey(p), p]))
+    const keys = new Set([...map1.keys(), ...map2.keys()])
     const result: Array<{ code: string; name: string; ptype: string; valsByYear: Record<number, { v1: PV; v2: PV }> }> = []
-    for (const code of codes) {
-      const p1 = map1.get(code)
-      const p2 = map2.get(code)
+    for (const key of keys) {
+      const p1 = map1.get(key)
+      const p2 = map2.get(key)
       const valsByYear: Record<number, { v1: PV; v2: PV }> = {}
       let hasDiff = false
       for (const year of displayYears) {
@@ -483,7 +498,7 @@ function OverallCompare() {
         valsByYear[year] = { v1, v2 }
         if (Math.abs(v1.budget - v2.budget) > 0.0005 || Math.abs(v1.target - v2.target) > 0.0005) hasDiff = true
       }
-      if (hasDiff) result.push({ code, name: (p1 ?? p2)!.name, ptype: (p1 ?? p2)!.project_type, valsByYear })
+      if (hasDiff) result.push({ code: key, name: (p1 ?? p2)!.name, ptype: (p1 ?? p2)!.project_type, valsByYear })
     }
     return result.sort((a, b) => {
       const da = displayYears.reduce((s, y) => s + Math.abs(a.valsByYear[y].v2.budget - a.valsByYear[y].v1.budget), 0)
