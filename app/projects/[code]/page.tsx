@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState, useCallback, useRef } from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import type { ProjectDetail, SubJob, BudgetSource, ChangeLogEntry } from "@/lib/types"
 import { PROJECT_GROUPS } from "@/components/BudgetTable"
@@ -137,6 +137,7 @@ function ToggleSwitch({ on, onChange, label }: { on: boolean; onChange: (v: bool
 
 export default function ProjectPage() {
   const params = useParams<{ code: string }>()
+  const router = useRouter()
   const code = decodeURIComponent(params.code)
   const { viewMode } = useViewMode()
   if (viewMode.kind === "snapshot") {
@@ -147,6 +148,7 @@ export default function ProjectPage() {
 }
 
 function ProjectEditor({ code }: { code: string }) {
+  const router = useRouter()
   const [project, setProject] = useState<ProjectDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -197,6 +199,20 @@ function ProjectEditor({ code }: { code: string }) {
   const [editingInfo, setEditingInfo] = useState(false)
   const [infoForm, setInfoForm] = useState({ name: "", item_no: "", year: "", project_type: "", division: "", department: "", group_name: "" })
   const [savingInfo, setSavingInfo] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deletingProject, setDeletingProject] = useState(false)
+
+  async function deleteProject() {
+    if (!project) return
+    setDeletingProject(true)
+    try {
+      await api.deleteProject(project.project_code)
+      router.push("/")
+    } catch (e: unknown) {
+      setError(String(e))
+      setDeletingProject(false)
+    }
+  }
 
   function startEditInfo() {
     if (!project) return
@@ -1398,6 +1414,25 @@ function ProjectEditor({ code }: { code: string }) {
                     style={{ padding: "2px 8px", fontSize: 11, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, cursor: "pointer" }}>
                     Edit
                   </button>
+                  {confirmingDelete ? (
+                    <>
+                      <span style={{ fontSize: 11, color: "#B91C1C" }}>ลบโครงการนี้ถาวร?</span>
+                      <button type="button" disabled={deletingProject} onClick={deleteProject}
+                        style={{ padding: "2px 8px", fontSize: 11, color: "#fff", background: deletingProject ? "#9CA3AF" : "#DC2626", border: "1px solid #DC2626", borderRadius: 5, cursor: deletingProject ? "default" : "pointer" }}>
+                        {deletingProject ? "Deleting…" : "Confirm delete"}
+                      </button>
+                      <button type="button" disabled={deletingProject} onClick={() => setConfirmingDelete(false)}
+                        style={{ padding: "2px 8px", fontSize: 11, color: "#6B7280", background: "#F3F4F6", border: "1px solid #E5E7EB", borderRadius: 5, cursor: "pointer" }}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={() => setConfirmingDelete(true)}
+                      title="Delete project"
+                      style={{ padding: "2px 8px", fontSize: 11, color: "#DC2626", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 5, cursor: "pointer" }}>
+                      Delete
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
                   <span className="font-mono">{project.project_code}</span>
