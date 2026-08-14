@@ -189,6 +189,9 @@ export default function AIImport2Page() {
   const [snapshotting, setSnapshotting] = useState(false)
   const [snapshotted, setSnapshotted] = useState(false)
   const [closingCarryover, setClosingCarryover] = useState<string | null>(null)
+  const [deletingProject, setDeletingProject] = useState<string | null>(null)
+  const [selectedDup, setSelectedDup] = useState<Set<string>>(new Set())
+  const [deletingSelected, setDeletingSelected] = useState(false)
   const [copied9ch, setCopied9ch] = useState(false)
   const [copiedP, setCopiedP] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -203,7 +206,7 @@ export default function AIImport2Page() {
   }
 
   function resetDownstream() {
-    setPreview(null); setManualMatches(new Map()); setExcludedRowKeys(new Set()); setResult(null); setError(null); setSnapshotted(false)
+    setPreview(null); setManualMatches(new Map()); setExcludedRowKeys(new Set()); setResult(null); setError(null); setSnapshotted(false); setSelectedDup(new Set())
   }
 
   function toggleExcludeRow(rowKey: number) {
@@ -333,20 +336,74 @@ export default function AIImport2Page() {
   }
 
   async function handleCloseCarryover(c: AIImport2CarryoverCandidate) {
+    const remainingYear = c.year - 1
     if (!confirm(
       `ยืนยันว่า "${c.name}" (${c.project_code}) ไม่มีงานต่อแล้วใช่ไหม?\n\n` +
-      `ระบบจะเพิ่มตัดทิ้งของปี ${c.year} จนคงเหลือ/รวม - ตัดทิ้ง = 0 (ปิดยอดผูกพันคงเหลือ ${fmt3(c.remaining)} ล้านบาท) ` +
+      `ระบบจะเพิ่มตัดทิ้งของปี ${remainingYear} จนคงเหลือ/รวม - ตัดทิ้ง = 0 (ปิดยอดผูกพันคงเหลือ ${fmt3(c.remaining)} ล้านบาท) ` +
       `— แก้ไขย้อนหลังได้ผ่านประวัติการแก้ไขของโครงการ`
     )) return
     setClosingCarryover(c.project_code)
     setError(null)
     try {
-      await api.importAI2CloseCarryover(c.project_code, c.year)
+      await api.importAI2CloseCarryover(c.project_code, remainingYear)
       await runPreview(manualMatches)
     } catch (e) {
       setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาด")
     } finally {
       setClosingCarryover(null)
+    }
+  }
+
+  async function handleDeleteProject(c: AIImport2CarryoverCandidate) {
+    if (!confirm(
+      `ลบโครงการ "${c.name}" (${c.project_code}) ถาวรใช่ไหม?\n\n` +
+      `ข้อมูลทั้งหมดของโครงการนี้ (งบทุกปี, sub-jobs, budget sources, ประวัติการแก้ไข) จะถูกลบออกจากฐานข้อมูลจริง ` +
+      `กู้คืนไม่ได้ผ่านปุ่ม undo — ถ้ายังไม่ได้สร้าง snapshot แนะนำให้สร้างก่อน`
+    )) return
+    setDeletingProject(c.project_code)
+    setError(null)
+    try {
+      await api.importAI2DeleteProject(c.project_code)
+      await runPreview(manualMatches)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาด")
+    } finally {
+      setDeletingProject(null)
+    }
+  }
+
+  function toggleSelectDup(code: string) {
+    setSelectedDup((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  }
+
+  function toggleSelectAllDup(codes: string[]) {
+    setSelectedDup((prev) => (prev.size === codes.length ? new Set() : new Set(codes)))
+  }
+
+  async function handleDeleteSelected() {
+    if (selectedDup.size === 0) return
+    if (!confirm(
+      `ลบ ${selectedDup.size} โครงการที่เลือกถาวรใช่ไหม?\n\n` +
+      `ข้อมูลทั้งหมดของแต่ละโครงการ (งบทุกปี, sub-jobs, budget sources, ประวัติการแก้ไข) จะถูกลบออกจากฐานข้อมูลจริง ` +
+      `กู้คืนไม่ได้ผ่านปุ่ม undo — ถ้ายังไม่ได้สร้าง snapshot แนะนำให้สร้างก่อน`
+    )) return
+    setDeletingSelected(true)
+    setError(null)
+    try {
+      for (const code of selectedDup) {
+        await api.importAI2DeleteProject(code)
+      }
+      setSelectedDup(new Set())
+      await runPreview(manualMatches)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "เกิดข้อผิดพลาด")
+    } finally {
+      setDeletingSelected(false)
     }
   }
 
@@ -456,6 +513,24 @@ export default function AIImport2Page() {
         </div>
       )}
 
+      {result && result.guessed_sources.length > 0 && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <p className="text-sm font-medium text-amber-800 mb-2">
+            ⚠️ {result.guessed_sources.length} รายการไม่มีข้อมูลแหล่งเงิน — ระบบเดาแหล่งเงินเป็น &quot;เงินรายได้ กฟภ.&quot; โดย default ให้แล้ว กรุณาตรวจสอบ/แก้ไขในหน้าโครงการ
+          </p>
+          <div className="space-y-1 max-h-48 overflow-y-auto">
+            {result.guessed_sources.map((g, i) => (
+              <div key={i} className="flex items-center gap-3 text-xs text-amber-900">
+                <span className="font-mono">{g.project_code}</span>
+                <span className="truncate flex-1">{g.item_no} {g.name}</span>
+                <span className="text-gray-500">ปี {g.data_year}</span>
+                <span className="tabular-nums font-medium">{fmt3(g.budget_committed + g.budget_invest)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {preview && !result && (
         <>
           <CompareTable2 rows={computeComparison(includedItems)} title="วงเงินดำเนินการ" get={(r) => r.budget} />
@@ -467,7 +542,7 @@ export default function AIImport2Page() {
               { n: 1, label: "ตรงกัน", count: matched.length, color: "text-gray-700" },
               { n: 2, label: "ใหม่", count: fresh.length, color: "text-green-700" },
               { n: 3, label: "ต้องตรวจสอบ", count: needsCheck.length, color: "text-amber-700" },
-              { n: 4, label: "ค้างปีก่อน", count: carryover.length, color: "text-red-700" },
+              { n: 4, label: "ไม่พบในไฟล์ใหม่", count: carryover.length, color: "text-red-700" },
             ].map((g) => (
               <div key={g.n} className="bg-white rounded-xl border p-4 text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">กลุ่ม {g.n}</div>
@@ -502,7 +577,7 @@ export default function AIImport2Page() {
                   <th className="text-left px-3 py-2">ข้อ</th>
                   <th className="text-left px-3 py-2">ชื่อโครงการ</th>
                   <th className="text-left px-3 py-2" title="ปีของข้อมูลที่กำลังนำเข้า (ปีเดิม/ปีใหม่ที่เทียบกันด้านขวา คือของปีนี้ทั้งคู่)">ปี</th>
-                  <th className="text-left px-3 py-2" title="ปีที่ใช้ค้นหาโครงการเดิมจนเจอ (ปีนำเข้า − 1) — ถ้าจับคู่ด้วยมือ อาจเป็นปีอื่นก็ได้">จับคู่จากปี</th>
+                  <th className="text-left px-3 py-2" title="ปีที่ใช้ค้นหาโครงการเดิมจนเจอ — ปกติคือปีนำเข้า − 1, แต่ถ้าโครงการนี้เคยถูกสร้างจากการนำเข้าซ้ำมาก่อน (ไม่มีปีก่อนหน้า) จะจับคู่กับปีนำเข้าเองแทน ป้องกันการสร้างซ้ำ — ถ้าจับคู่ด้วยมือ อาจเป็นปีอื่นก็ได้">จับคู่จากปี</th>
                   <th className="text-left px-3 py-2">ประเภท</th>
                   <th className="text-right px-3 py-2 border-l">วงเงินดำเนินการ (เดิม)</th>
                   <th className="text-right px-3 py-2">วงเงินดำเนินการ (ใหม่)</th>
@@ -525,7 +600,7 @@ export default function AIImport2Page() {
                       <td className="px-3 py-2 font-mono text-xs">{it.item_no}</td>
                       <td className="px-3 py-2 max-w-md whitespace-normal break-words">{it.name}</td>
                       <td className="px-3 py-2">{it.year}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{isManual ? "ด้วยมือ" : it.year - 1}</td>
+                      <td className="px-3 py-2 text-xs text-gray-500">{isManual ? "ด้วยมือ" : (it.matched_year ?? it.year - 1)}</td>
                       <td className="px-3 py-2">{it.project_type}</td>
                       <td className="px-3 py-2 text-right border-l tabular-nums text-gray-500">{fmt3(oldBudget)}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-blue-600 font-medium">{fmt3(newBudget)}</td>
@@ -616,25 +691,47 @@ export default function AIImport2Page() {
             </table>
           </div>
 
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">
-            4. ค้างปีก่อน ({carryover.length})
-            <span className="font-normal text-gray-400"> — ผูกพันปีก่อนยังไม่ปิดยอด และไฟล์นี้ไม่มีแถวที่ตรง</span>
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-3">
+            <span>
+              4. ไม่พบในไฟล์ใหม่ ({carryover.length})
+              <span className="font-normal text-gray-400"> — โครงการในปีที่กำลังนำเข้านี้ที่มีวงเงินเดิม (ผูกพันหรือลงทุน) แต่ไฟล์นี้ไม่มีแถวที่ตรง หรือมีแต่ค่าทั้งหมดเป็น 0 — อาจเป็นโครงการซ้ำ (ผูกพัน=0/ลงทุน&gt;0) หรือโครงการที่ไม่มีงานต่อแล้วแต่ยังไม่ได้ปิดยอด (มีผูกพันเดิมค้างอยู่)</span>
+            </span>
+            {carryover.length > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedDup.size === 0 || deletingSelected}
+                className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:bg-red-50 disabled:text-red-300"
+              >
+                {deletingSelected ? "กำลังลบ..." : `🗑 ลบที่เลือก (${selectedDup.size})`}
+              </button>
+            )}
           </h2>
           <div className="border rounded-lg overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-500 text-xs">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={carryover.length > 0 && selectedDup.size === carryover.length}
+                      onChange={() => toggleSelectAllDup(carryover.map((c) => c.project_code))}
+                      title="เลือกทั้งหมด"
+                    />
+                  </th>
                   <th className="text-left px-3 py-2">รหัสโครงการ</th>
                   <th className="text-left px-3 py-2">ข้อ</th>
                   <th className="text-left px-3 py-2">ชื่อโครงการ</th>
                   <th className="text-left px-3 py-2" title="ปีที่โครงการนี้เริ่มต้น (projects.year)">
                     ปีเริ่มต้น
                   </th>
-                  <th className="text-left px-3 py-2" title="ปีที่มียอดผูกพันคงเหลือค้างอยู่ — อาจต่างจากปีเริ่มต้นได้หลายปี ถ้าโครงการดำเนินมานาน">
-                    ปียอดค้าง
+                  <th className="text-left px-3 py-2" title="ปีที่ตรวจสอบ (ปีที่กำลังนำเข้า) — อาจต่างจากปีเริ่มต้นได้หลายปี ถ้าโครงการดำเนินมานาน">
+                    ปีที่ตรวจ
                   </th>
-                  <th className="text-right px-3 py-2" title="วงเงินดำเนินการ/ผูกพัน − จ่ายจริง/ผูกพัน − ตัดทิ้ง — ตัวเลขนี้หักตัดทิ้งที่มีอยู่แล้ว ไม่ต้องคำนวณลบเพิ่ม">
-                    ผูกพันคงเหลือ (หลังหักตัดทิ้ง)
+                  <th className="text-right px-3 py-2" title="วงเงินดำเนินการ/ลงทุน ของปีที่ตรวจ — เหตุผลที่แถวนี้ถูกเลือกมา (ผูกพัน = 0 ในปีเดียวกัน)">
+                    วงเงินดำเนินการ/ลงทุน
+                  </th>
+                  <th className="text-right px-3 py-2" title="ของปี Y-1 (ปีก่อนปีที่ตรวจ) ไม่ใช่ปีที่ตรวจ: วงเงินดำเนินการ/ผูกพัน − จ่ายจริง/ผูกพัน − ตัดทิ้ง − ต่ำกว่างบ — ตัวเลขนี้หักตัดทิ้ง/ต่ำกว่างบที่มีอยู่แล้ว ไม่ต้องคำนวณลบเพิ่ม">
+                    ผูกพันคงเหลือ (ปีก่อน)
                   </th>
                   <th className="text-left px-3 py-2"></th>
                 </tr>
@@ -642,6 +739,9 @@ export default function AIImport2Page() {
               <tbody>
                 {carryover.map((c) => (
                   <tr key={c.project_code} className="border-t">
+                    <td className="px-3 py-2">
+                      <input type="checkbox" checked={selectedDup.has(c.project_code)} onChange={() => toggleSelectDup(c.project_code)} />
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs">{c.project_code}</td>
                     <td className="px-3 py-2 font-mono text-xs">{c.item_no}</td>
                     <td className="px-3 py-2 max-w-md whitespace-normal break-words">{c.name}</td>
@@ -650,20 +750,33 @@ export default function AIImport2Page() {
                       {c.year}
                       {c.year !== c.start_year && <span className="text-xs text-gray-400 ml-1">(+{c.year - c.start_year})</span>}
                     </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-blue-600 font-medium">{fmt3(c.invest)}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-gray-700 font-medium">{fmt3(c.remaining)}</td>
                     <td className="px-3 py-2">
-                      <button
-                        onClick={() => handleCloseCarryover(c)}
-                        disabled={closingCarryover === c.project_code}
-                        title="ไม่มีงานต่อแล้ว — เพิ่มตัดทิ้งให้คงเหลือเป็น 0"
-                        className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
-                      >
-                        {closingCarryover === c.project_code ? "กำลังปิดยอด..." : "✓ ยืนยันไม่มีงานต่อ"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {c.remaining > 0 && (
+                          <button
+                            onClick={() => handleCloseCarryover(c)}
+                            disabled={closingCarryover === c.project_code || deletingProject === c.project_code}
+                            title="ไม่มีงานต่อแล้ว — เพิ่มตัดทิ้งให้คงเหลือเป็น 0 (เก็บโครงการไว้)"
+                            className="text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+                          >
+                            {closingCarryover === c.project_code ? "กำลังปิดยอด..." : "✓ ยืนยันไม่มีงานต่อ"}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteProject(c)}
+                          disabled={deletingProject === c.project_code || closingCarryover === c.project_code}
+                          title="ลบโครงการนี้ถาวรออกจากฐานข้อมูล"
+                          className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50"
+                        >
+                          {deletingProject === c.project_code ? "กำลังลบ..." : "🗑 ลบโครงการ"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {carryover.length === 0 && <tr><td colSpan={7} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
+                {carryover.length === 0 && <tr><td colSpan={9} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
               </tbody>
             </table>
           </div>

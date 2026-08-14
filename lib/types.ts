@@ -324,6 +324,7 @@ export type AIImport2Item = {
   project_group: string | null
   group: AIImport2Group
   matched_code?: string
+  matched_year?: number
   sub_job_count: number
   budget_source_count: number
   old_budget_committed: number
@@ -344,6 +345,7 @@ export type AIImport2CarryoverCandidate = {
   start_year: number
   year: number
   remaining: number
+  invest: number
 }
 
 export type AIImport2PreviewResult = {
@@ -352,10 +354,21 @@ export type AIImport2PreviewResult = {
   carryover_candidates: AIImport2CarryoverCandidate[]
 }
 
+export type AIImport2GuessedSource = {
+  row_key: number
+  item_no: string
+  name: string
+  project_code: string
+  data_year: number
+  budget_committed: number
+  budget_invest: number
+}
+
 export type AIImport2ApplyResult = {
   results: AIImportApplyResultItem[]
   created: number
   updated: number
+  guessed_sources: AIImport2GuessedSource[]
 }
 
 export type ProjectOverviewItem = {
