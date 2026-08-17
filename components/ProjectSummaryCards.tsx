@@ -9,7 +9,7 @@ export type SourceMetricEntry = MetricEntry & { source: string }
 const METRICS = [
   { key: "invest_budget", label: "วงเงิน/ลงทุน" },
   { key: "total_target", label: "เป้า/รวม" },
-  { key: "cut_under", label: "ตัดทิ้ง/โยกย้าย+ต่ำกว่างบ" },
+  { key: "cut_under", label: "ตัดทิ้ง/ต่ำกว่างบ+โอนไป/โอนมา" },
 ] as const
 
 function metricValue(entries: MetricEntry[], key: (typeof METRICS)[number]["key"]) {

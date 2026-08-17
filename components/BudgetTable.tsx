@@ -13,8 +13,8 @@ const GROUPS = [
   { key: "Budget", label: "วงเงินดำเนินการปี" },
   { key: "Target", label: "เป้าหมายการเบิกจ่ายปี" },
   { key: "Remain", label: "คงเหลือ" },
-  { key: "CutTransfer", label: "ตัดทิ้ง" },
-  { key: "UnderBudget", label: "ต่ำกว่างบ" },
+  { key: "CutTransfer", label: "ตัดทิ้ง/ต่ำกว่างบ" },
+  { key: "UnderBudget", label: "โอนไป/โอนมา" },
 ] as const
 
 

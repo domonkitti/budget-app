@@ -112,7 +112,7 @@ export function buildAIExport(projects: FlatProject[], groups: ReportGroup[], re
   out.push(`- ปีทั้งหมดเป็นปีงบประมาณ พ.ศ.`)
   out.push(`- fund_type: "ลงทุน" = งบลงทุนที่ตั้งในปีนั้น / "ผูกพัน" = งบผูกพันที่ยกมาจากปีก่อน`)
   out.push(`- budget = งบประมาณที่ได้รับ, target = เป้าหมายเบิกจ่าย, remain = คงเหลือ (budget − target),`)
-  out.push(`  cut_transfer = ตัดโอน (รวมอยู่ในการคิดยอดเสมอ), under_budget = ต่ำกว่างบ`)
+  out.push(`  cut_transfer = ตัดทิ้ง/ต่ำกว่างบ (รวมอยู่ในการคิดยอดเสมอ), under_budget = โอนไป/โอนมา`)
   out.push(`- แหล่งเงิน (source) มี 3 แหล่ง: เงินกู้ / เงินรายได้ กฟภ. / เงินสมทบผู้ใช้ไฟ`)
   out.push(`- ตาราง CSV: แถวแรกเป็นชื่อคอลัมน์ คั่นด้วย comma`)
   out.push(`- ส่วน "รายงานคำขอตั้ง" คือแบบฟอร์มเสนอขอตั้งงบประมาณ (แบบ งป.003/004/007/009) ของแต่ละงาน/แผนงาน`)

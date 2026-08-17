@@ -20,8 +20,8 @@ const COL_GROUPS = [
   { label: "วงเงินดำเนินการ",    cols: 3, bg: "rgba(96,165,250,0.15)",  subBg: "rgba(96,165,250,0.08)" },
   { label: "เป้าหมายการเบิกจ่าย", cols: 3, bg: "rgba(52,211,153,0.15)",  subBg: "rgba(52,211,153,0.08)" },
   { label: "คงเหลือ",             cols: 3, bg: "rgba(251,191,36,0.15)",  subBg: "rgba(251,191,36,0.08)" },
-  { label: "ตัดทิ้ง/โยกย้าย",   cols: 1, bg: "rgba(239,68,68,0.12)",   subBg: "rgba(239,68,68,0.06)" },
-  { label: "ต่ำกว่างบ",          cols: 1, bg: "rgba(168,85,247,0.12)",  subBg: "rgba(168,85,247,0.06)" },
+  { label: "ตัดทิ้ง/ต่ำกว่างบ",  cols: 1, bg: "rgba(239,68,68,0.12)",   subBg: "rgba(239,68,68,0.06)" },
+  { label: "โอนไป/โอนมา",        cols: 1, bg: "rgba(168,85,247,0.12)",  subBg: "rgba(168,85,247,0.06)" },
 ]
 const COLS_PER_YEAR = COL_GROUPS.reduce((s, g) => s + g.cols, 0)
 

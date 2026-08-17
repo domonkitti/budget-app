@@ -306,8 +306,8 @@ function ProjectEditor({ code }: { code: string }) {
   function historyFieldLabel(field: string) {
     if (field === "budget") return "วงเงินดำเนินการ"
     if (field === "target") return "เป้าหมายการเบิกจ่าย"
-    if (field === "cut_transfer") return "ตัดทิ้ง/โยกย้าย"
-    if (field === "under_budget") return "ต่ำกว่างบ"
+    if (field === "cut_transfer") return "ตัดทิ้ง/ต่ำกว่างบ"
+    if (field === "under_budget") return "โอนไป/โอนมา"
     return field
   }
 
@@ -1138,8 +1138,8 @@ function ProjectEditor({ code }: { code: string }) {
     { label: "วงเงินดำเนินการ",    field: "budget" as const,       cols: 3 as const, bg: "rgba(96,165,250,0.15)", subBg: "rgba(96,165,250,0.08)" },
     { label: "เป้าหมายการเบิกจ่าย", field: "target" as const,      cols: 3 as const, bg: "rgba(52,211,153,0.15)", subBg: "rgba(52,211,153,0.08)" },
     { label: "คงเหลือ",             field: null,                    cols: 3 as const, bg: "rgba(251,191,36,0.15)", subBg: "rgba(251,191,36,0.08)" },
-    { label: "ตัดทิ้ง/โยกย้าย",   field: "cut_transfer" as const, cols: 1 as const, bg: "rgba(239,68,68,0.12)",  subBg: "rgba(239,68,68,0.06)" },
-    { label: "ต่ำกว่างบ",          field: "under_budget" as const, cols: 1 as const, bg: "rgba(168,85,247,0.12)", subBg: "rgba(168,85,247,0.06)" },
+    { label: "ตัดทิ้ง/ต่ำกว่างบ",  field: "cut_transfer" as const, cols: 1 as const, bg: "rgba(239,68,68,0.12)",  subBg: "rgba(239,68,68,0.06)" },
+    { label: "โอนไป/โอนมา",        field: "under_budget" as const, cols: 1 as const, bg: "rgba(168,85,247,0.12)", subBg: "rgba(168,85,247,0.06)" },
   ]
   const COLS_PER_YEAR = COL_GROUPS.reduce((s, g) => s + g.cols, 0)
 
