@@ -38,11 +38,31 @@ type SourceGroup = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// normalizeWS collapses whitespace runs (including embedded \n/\r\n left by
+// a word-wrapped Excel cell during import) into a single space, for a
+// readable display name. Only affects display — doesn't touch stored data.
+function normalizeWS(s: string): string {
+  return s.replace(/\s+/g, " ").trim()
+}
+
+// wsMatchKey strips whitespace entirely — a stricter key than normalizeWS,
+// used only for grouping. Confirmed for real (project I2568Y009): the same
+// sub_job name was extracted with a line-wrap-turned-space in some years'
+// imports ("...ชำรุดงาน ในโครงการ AMR") and with the wrap point dropped
+// entirely in others ("...ชำรุดงานในโครงการ AMR", zero separator) — the
+// latter can't be merged by collapsing whitespace runs since there's no
+// whitespace there to collapse. Same technique already used server-side for
+// project-name matching (see matchByNameExact in ai_import2.go).
+function wsMatchKey(s: string): string {
+  return s.replace(/\s+/g, "")
+}
+
 function groupSubJobs(jobs: SubJob[]): SubJobGroup[] {
   const map = new Map<string, SubJobGroup>()
   for (const sj of jobs) {
-    if (!map.has(sj.name)) map.set(sj.name, { name: sj.name, sort_order: sj.sort_order, years: [] })
-    const g = map.get(sj.name)!
+    const key = wsMatchKey(sj.name)
+    if (!map.has(key)) map.set(key, { name: normalizeWS(sj.name), sort_order: sj.sort_order, years: [] })
+    const g = map.get(key)!
     let yr = g.years.find((y) => y.year === sj.data_year)
     if (!yr) { yr = { year: sj.data_year, committed: null, invest: null, summary: null }; g.years.push(yr) }
     if (sj.fund_type === "ผูกพัน") yr.committed = sj
