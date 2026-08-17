@@ -1,7 +1,6 @@
 "use client"
 
 import { useRef, useState } from "react"
-import Link from "next/link"
 import { api } from "@/lib/api"
 import type { AIImport2PreviewResult, AIImport2ApplyResult, AIImport2Item, AIImport2CarryoverCandidate } from "@/lib/types"
 import { I_9CH_PROMPT, P_PROJECT_PROMPT } from "@/lib/aiImportPrompts"
@@ -417,10 +416,7 @@ export default function AIImport2Page() {
   return (
     <div className="p-8 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-semibold">นำเข้าข้อมูลด้วย AI 2 <span className="text-sm font-normal text-amber-600">(จับคู่ปีต่อปี — ทดลอง)</span></h1>
-        <Link href="/import/ai" className="text-sm text-blue-600 hover:underline">
-          ไปหน้านำเข้า AI เดิม →
-        </Link>
+        <h1 className="text-2xl font-semibold">นำเข้าข้อมูลด้วย AI <span className="text-sm font-normal text-gray-500">(จับคู่ปีต่อปี)</span></h1>
       </div>
       <p className="text-sm text-gray-500 mb-3">
         จับคู่โครงการด้วย <strong>ชื่อโครงการที่ตรงกันแบบเป๊ะ ๆ (exact match, 1 ต่อ 1)</strong> กับปีก่อนหน้าเท่านั้น

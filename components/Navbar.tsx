@@ -175,15 +175,15 @@ export default function Navbar() {
 
           {/* ── AI import button ── */}
           <Link
-            href="/import/ai"
+            href="/import/ai2"
             prefetch={false}
             title="วางผลลัพธ์ JSON จาก copilot เพื่อนำเข้าโครงการ/งบประมาณเป็นชุด"
             style={{
               ...btnBase,
               textDecoration: "none",
-              background: path.startsWith("/import/ai") ? "#EFF6FF" : "#F9FAFB",
-              color: path.startsWith("/import/ai") ? "#1D4ED8" : "#6B7280",
-              borderColor: path.startsWith("/import/ai") ? "#93C5FD" : "#E5E7EB",
+              background: path.startsWith("/import/ai2") ? "#EFF6FF" : "#F9FAFB",
+              color: path.startsWith("/import/ai2") ? "#1D4ED8" : "#6B7280",
+              borderColor: path.startsWith("/import/ai2") ? "#93C5FD" : "#E5E7EB",
             }}
           >
             <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor">

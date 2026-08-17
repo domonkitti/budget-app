@@ -236,63 +236,6 @@ export type AIImportNeedsReview = {
   reason: string
 }
 
-export type AIImportPreviewItem = {
-  row_key: number
-  item_no: string
-  name: string
-  year: number
-  project_type: string
-  division: string | null
-  department: string | null
-  project_group: string | null
-  matched_code?: string
-  sub_job_count: number
-  budget_source_count: number
-  old_budget_committed: number
-  old_budget_invest: number
-  new_budget_committed: number
-  new_budget_invest: number
-  rejected_match_code?: string
-  rejected_match_name?: string
-  rejected_match_similarity?: number
-}
-
-export type AIImportCompareRow = {
-  project_type: string
-  old_budget_committed: number
-  old_budget_invest: number
-  old_target_committed: number
-  old_target_invest: number
-  new_budget_committed: number
-  new_budget_invest: number
-  new_target_committed: number
-  new_target_invest: number
-}
-
-export type AIImportYearTotal = {
-  year: number
-  project_count: number
-  budget: number
-}
-
-export type AIImportMissingProject = {
-  project_code: string
-  item_no: string
-  name: string
-  project_type: string
-  old_budget_committed: number
-  old_budget_invest: number
-}
-
-export type AIImportPreviewResult = {
-  items: AIImportPreviewItem[]
-  needs_review: AIImportNeedsReview[]
-  summary?: unknown
-  comparison: AIImportCompareRow[]
-  db_year_totals: AIImportYearTotal[]
-  missing_projects: AIImportMissingProject[]
-}
-
 export type AIImportApplyResultItem = {
   row_key: number
   item_no: string
@@ -301,16 +244,10 @@ export type AIImportApplyResultItem = {
   action: 'created' | 'updated'
 }
 
-export type AIImportApplyResult = {
-  results: AIImportApplyResultItem[]
-  created: number
-  updated: number
-  deleted: number
-  deleted_codes?: string[]
-}
-
-// AI Import 2 — separate year-carryover matching workflow (/import/ai2),
-// independent of the AIImport* types above which back /import/ai.
+// AI Import 2 — year-carryover matching workflow (/import/ai2), the only AI
+// import workflow left (an older item_no-matching one at /import/ai was
+// removed; AIImportNeedsReview/AIImportApplyResultItem above are the shared
+// input/output shapes it still reuses).
 export type AIImport2Group = 'matched' | 'new' | 'needs_check'
 
 export type AIImport2Item = {

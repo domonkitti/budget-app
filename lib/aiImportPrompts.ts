@@ -1,4 +1,4 @@
-// Extraction prompts for the AI import page (/import/ai). Kept in sync by hand with
+// Extraction prompts for the AI import page (/import/ai2). Kept in sync by hand with
 // `example of คำขอตั้ง/reading input/{I_project,P_project}/*_prompt.md` — copy any edit
 // made there back into these constants (and vice versa).
 

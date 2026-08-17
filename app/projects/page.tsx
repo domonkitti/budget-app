@@ -320,7 +320,7 @@ export default function ProjectsPage() {
           >
             + สร้างโครงการ
           </button>
-          <Link href="/import/ai" className="text-sm text-blue-600 hover:underline">
+          <Link href="/import/ai2" className="text-sm text-blue-600 hover:underline">
             นำเข้าด้วย AI →
           </Link>
           <Link href="/import/log" className="text-sm text-blue-600 hover:underline">

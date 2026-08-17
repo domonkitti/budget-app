@@ -1,4 +1,4 @@
-import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting, AIImportPreviewResult, AIImportApplyResult, AIImport2PreviewResult, AIImport2ApplyResult } from "./types"
+import type { CategoryAllocationSelection, FlatProject, SummaryRow, Project, ProjectDetail, FilterOptions, Snapshot, SnapshotDetail, ChangeLogEntry, SubJob, BudgetSource, BatchSaveRequest, ImportStatus, ProjectDiff, ImportLog, ProjectOverviewItem, ActiveYearSetting, AIImport2PreviewResult, AIImport2ApplyResult } from "./types"
 
 const BASE = "/api/v1"
 const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
@@ -194,15 +194,13 @@ export const api = {
   importAccept: (code: string) => post<{ ok: boolean; project_code: string; po_version: number }>(`/import/project/${code}/accept`, {}),
   importLog: () => get<ImportLog[]>("/import/log"),
 
-  // AI import (paste-JSON bulk import from "9 ช่อง" / "งบโครงการ" tables)
-  importAIPreview: (batch: unknown) => post<AIImportPreviewResult>("/import/ai/preview", batch),
-  importAIApply: (batch: unknown) => post<AIImportApplyResult>("/import/ai/apply", batch),
-
-  // AI import 2 — separate year-carryover matching workflow, independent of the above
+  // AI import (paste-JSON bulk import from "9 ช่อง" / "งบโครงการ" tables) — year-carryover matching workflow
   importAI2Preview: (batch: unknown) => post<AIImport2PreviewResult>("/import/ai2/preview", batch),
   importAI2Apply: (batch: unknown) => post<AIImport2ApplyResult>("/import/ai2/apply", batch),
   importAI2CloseCarryover: (projectCode: string, dataYear: number) =>
     post<{ rows_updated: number }>("/import/ai2/close-carryover", { project_code: projectCode, data_year: dataYear }),
+  importAI2DeleteProject: (projectCode: string) =>
+    post<{ rows_deleted: number }>("/import/ai2/delete-project", { project_code: projectCode }),
 
   // Project overview
   projectOverview: (year?: number) =>
