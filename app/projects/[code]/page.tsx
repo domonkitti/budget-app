@@ -578,16 +578,22 @@ function ProjectEditor({ code }: { code: string }) {
         curBudget = carryForward
         curTarget = nextBase.target
       } else {
-        // No committed row for nextYear — create one pendingNew and stop
+        // No committed row for nextYear — create one pendingNew and stop.
+        // For the virtual SJ row this must seed cut_transfer/under_budget from
+        // the real budget_sources totals (like commInit does for display),
+        // not 0 — otherwise the first year this cascade ever touches silently
+        // zeroes out that year's ตัดทิ้ง/ต่ำกว่างบ instead of preserving it.
         const nextKey = `${prefix}-new|${groupName}|${nextYear}|ผูกพัน`
         const existing = pendingNew.get(nextKey) ?? extraPendingNew.get(nextKey)
+        const isVirtualSj = prefix === "sj" && groupName === DEFAULT_VIRTUAL_SJ_NAME
+        const virtualCtUb = !existing && isVirtualSj ? bsYearTotal(nextYear) : null
         extraPendingNew.set(nextKey, existing
           ? { ...existing, budget: carryForward }
           : {
             budget: carryForward,
             target: 0,
-            cut_transfer: 0,
-            under_budget: 0,
+            cut_transfer: virtualCtUb?.total_ct ?? 0,
+            under_budget: virtualCtUb?.total_ub ?? 0,
             project_id: project.id,
             name_or_source: groupName,
             sort_order: prefix === "sj" ? sortOrder : null,
