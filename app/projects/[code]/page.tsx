@@ -227,7 +227,7 @@ function ProjectEditor({ code }: { code: string }) {
     setDeletingProject(true)
     try {
       await api.deleteProject(project.project_code)
-      router.push("/")
+      router.push("/overall")
     } catch (e: unknown) {
       setError(String(e))
       setDeletingProject(false)
@@ -1359,7 +1359,7 @@ function ProjectEditor({ code }: { code: string }) {
   return (
     <div className="min-h-screen bg-gray-50" style={{ paddingBottom: pendingCount > 0 ? 72 : 0 }}>
       <header className="bg-white border-b px-6 py-4">
-        <Link href="/" style={{ color: "#9CA3AF", fontSize: 12, textDecoration: "none" }}>← Back to dashboard</Link>
+        <Link href="/overall" style={{ color: "#9CA3AF", fontSize: 12, textDecoration: "none" }}>← Back to dashboard</Link>
         {project && (
           <div className="mt-1 flex items-start justify-between gap-4">
             {editingInfo ? (

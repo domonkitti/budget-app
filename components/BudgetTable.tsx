@@ -9,6 +9,7 @@ const FUND_COLUMNS = [
   { key: "invest", label: "ลงทุน", fundType: "ลงทุน" as const },
   { key: "total", label: "รวม", fundType: null },
 ] as const
+const EMPTY_SOURCE_SET = new Set<string>()
 const GROUPS = [
   { key: "Budget", label: "วงเงินดำเนินการปี" },
   { key: "Target", label: "เป้าหมายการเบิกจ่ายปี" },
@@ -66,6 +67,21 @@ function getVal(
   return breakdown.reduce((sum, entry) => {
     if (entry.year !== year) return sum
     if (source !== null && entry.source !== source) return sum
+    if (fundType !== null && entry.fund_type !== fundType) return sum
+    return sum + metricValue(entry, group)
+  }, 0)
+}
+
+function getValBySourceSet(
+  breakdown: SourceYearEntry[],
+  year: number,
+  sourceSet: Set<string>,
+  fundType: FundType | null,
+  group: Group,
+): number {
+  return breakdown.reduce((sum, entry) => {
+    if (entry.year !== year) return sum
+    if (sourceSet.size > 0 && !sourceSet.has(entry.source)) return sum
     if (fundType !== null && entry.fund_type !== fundType) return sum
     return sum + metricValue(entry, group)
   }, 0)
@@ -142,6 +158,32 @@ function itemNoCompare(a: string | null, b: string | null) {
     if (sc !== 0) return sc
   }
   return 0
+}
+
+// Matches the default "item" sort in the `sorted` memo below exactly (type →
+// group → item_no) so other views (e.g. the category compact matrix) can
+// order projects the same way as this table's default view without
+// duplicating the BudgetTable UI.
+export function defaultProjectOrder(a: FlatProject, b: FlatProject): number {
+  const typeOrder = (t: string) => (t === "Y" ? 0 : t === "CY" ? 1 : t === "C" ? 2 : t === "CC" ? 3 : t === "L" ? 4 : 5)
+  const GROUP_ORDER = [
+    "หมวดสิ่งก่อสร้าง",
+    "หมวดเครื่องจักรอุปกรณ์",
+    "หมวดเครื่องใช้สำนักงานและเครื่องมือเครื่องใช้ขนาดเล็ก",
+    "หมวดวิจัยและพัฒนา",
+    "หมวดลงทุนอื่นๆ",
+    "หมวดสำรองกรณีจำเป็นเร่งด่วน",
+    "หมวดสำรองราคา",
+  ]
+  const groupOrder = (g: string | null) => {
+    const i = GROUP_ORDER.indexOf(g ?? "")
+    return i === -1 ? GROUP_ORDER.length : i
+  }
+  const tDiff = typeOrder(a.project_type) - typeOrder(b.project_type)
+  if (tDiff !== 0) return tDiff
+  const gDiff = groupOrder(a.group_name) - groupOrder(b.group_name)
+  if (gDiff !== 0) return gDiff
+  return itemNoCompare(a.item_no, b.item_no)
 }
 
 function workbookSafeName(value: string) {
@@ -265,10 +307,14 @@ function PivotFilter({
   allValues,
   selected,
   onChange,
+  compact = false,
+  title,
 }: {
   allValues: string[]
   selected: Set<string>
   onChange: (next: Set<string>) => void
+  compact?: boolean
+  title?: string
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
@@ -371,30 +417,55 @@ function PivotFilter({
   }
 
   return (
-    <div ref={ref} style={{ position: "relative", width: "100%" }}>
-      <button
-        type="button"
-        onClick={openDropdown}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 3,
-          width: "100%",
-          background: isAll ? "#fff" : "#EEF2FF",
-          border: `0.5px solid ${isAll ? "#D1D5DB" : "#6366F1"}`,
-          borderRadius: 5,
-          padding: "2px 6px",
-          fontSize: 11,
-          color: isAll ? "#6B7280" : "#4338CA",
-          cursor: "pointer",
-          overflow: "hidden",
-        }}
-      >
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{label}</span>
-        <svg width="8" height="8" viewBox="0 0 20 20" fill="currentColor" style={{ flexShrink: 0, opacity: 0.5 }}>
-          <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd"/>
-        </svg>
-      </button>
+    <div ref={ref} style={{ position: "relative", width: compact ? "auto" : "100%", display: compact ? "inline-flex" : "block" }}>
+      {compact ? (
+        <button
+          type="button"
+          onClick={openDropdown}
+          title={title ?? (isAll ? "Filter" : label)}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 15,
+            height: 15,
+            background: isAll ? "transparent" : "#EEF2FF",
+            border: `1px solid ${isAll ? "#D1D5DB" : "#6366F1"}`,
+            borderRadius: 4,
+            padding: 0,
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          <svg width="9" height="9" viewBox="0 0 20 20" fill="none" stroke={isAll ? "#9CA3AF" : "#4338CA"} strokeWidth={2} strokeLinecap="round">
+            <path d="M3 5h14M6.5 10h7M9.5 15h1" />
+          </svg>
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={openDropdown}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 3,
+            width: "100%",
+            background: isAll ? "#fff" : "#EEF2FF",
+            border: `0.5px solid ${isAll ? "#D1D5DB" : "#6366F1"}`,
+            borderRadius: 5,
+            padding: "2px 6px",
+            fontSize: 11,
+            color: isAll ? "#6B7280" : "#4338CA",
+            cursor: "pointer",
+            overflow: "hidden",
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{label}</span>
+          <svg width="8" height="8" viewBox="0 0 20 20" fill="currentColor" style={{ flexShrink: 0, opacity: 0.5 }}>
+            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd"/>
+          </svg>
+        </button>
+      )}
 
       {open && (
         <div
@@ -561,6 +632,8 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
   const [selDepartments, setSelDepartments] = useState<Set<string>>(new Set())
   const [selGroups, setSelGroups] = useState<Set<string>>(new Set())
   const [selTypes, setSelTypes] = useState<Set<string>>(new Set())
+  const [selBudgetSources, setSelBudgetSources] = useState<Set<string>>(new Set())
+  const [selTargetSources, setSelTargetSources] = useState<Set<string>>(new Set())
   const [selYears, setSelYears] = useState<Set<string>>(new Set())
   const [selDisplayYears, setSelDisplayYears] = useState<Set<string>>(new Set())
   const [numFilters, setNumFilters] = useState<Record<string, NumericFilter>>({})
@@ -682,6 +755,10 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
           year,
           group: group.key,
           fundType: column.fundType,
+          sourceSet:
+            group.key === "Budget" ? selBudgetSources
+            : group.key === "Target" ? selTargetSources
+            : EMPTY_SOURCE_SET,
           filter: numFilters[filterKey(year, group.key, column.key)],
         })),
       ),
@@ -706,13 +783,13 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
         const min = parseFilterValue(column.filter?.min ?? "")
         const max = parseFilterValue(column.filter?.max ?? "")
         if (min === null && max === null) return true
-        const value = getVal(row.source_breakdown, column.year, null, column.fundType, column.group)
+        const value = getValBySourceSet(row.source_breakdown, column.year, column.sourceSet, column.fundType, column.group)
         if (min !== null && value < min) return false
         if (max !== null && value > max) return false
         return true
       })
     })
-  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selDepartments, selGroups, selTypes, selYears, selDisplayYears, visibleFunds, visibleGroups])
+  }, [data, displayYears, selNames, numFilters, selCodes, selDivisions, selDepartments, selGroups, selTypes, selYears, selDisplayYears, selBudgetSources, selTargetSources, visibleFunds, visibleGroups])
 
   const sorted = useMemo(() => {
     if (!sortState) return filtered
@@ -1295,7 +1372,20 @@ const BudgetTable = forwardRef<BudgetTableHandle, Props>(function BudgetTable({ 
                         colSpan={getEffectiveFunds(group.key).length}
                         style={{ ...thBase, top: row2Top, zIndex: 4 }}
                       >
-                        {group.label}
+                        {group.key === "Budget" || group.key === "Target" ? (
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <span>{group.label}</span>
+                            <PivotFilter
+                              compact
+                              title="กรองแหล่งเงิน — ไม่เลือก = รวมทุกแหล่ง"
+                              allValues={sources}
+                              selected={group.key === "Budget" ? selBudgetSources : selTargetSources}
+                              onChange={group.key === "Budget" ? setSelBudgetSources : setSelTargetSources}
+                            />
+                          </div>
+                        ) : (
+                          group.label
+                        )}
                       </th>
                     ))}
                   </Fragment>

@@ -106,7 +106,7 @@ export default function Navbar() {
   }
 
   const navLinks = [
-    { href: "/", label: "Overall" },
+    { href: "/overall", label: "Overall" },
     { href: "/category", label: "Category" },
     { href: "/compare", label: "Compare" },
     { href: "/scoring", label: "Scoring" },

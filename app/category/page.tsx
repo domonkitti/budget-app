@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useCallback, useEffect, useState } from "react"
 import { api } from "@/lib/api"
-import type { Category } from "@/lib/types"
+import type { Category, CategoryValue } from "@/lib/types"
 
 function categoryPath(name: string) {
   return `/category/${encodeURIComponent(name)}`
@@ -15,6 +15,9 @@ export default function CategoryPage() {
   const [newCat, setNewCat] = useState("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [addingFor, setAddingFor] = useState<number | null>(null)
+  const [valueInput, setValueInput] = useState("")
+  const [values, setValues] = useState<Record<number, CategoryValue[]>>({})
 
   const loadCategories = useCallback(async () => {
     setLoading(true)
@@ -48,6 +51,41 @@ export default function CategoryPage() {
     } catch {
       setError("Category name already exists")
     }
+  }
+
+  async function loadValues(catID: number) {
+    const vals = await api.categoryValues(catID)
+    setValues(v => ({ ...v, [catID]: vals }))
+  }
+
+  async function toggleAdding(catID: number) {
+    if (addingFor === catID) {
+      setAddingFor(null)
+      return
+    }
+    setAddingFor(catID)
+    setValueInput("")
+    if (!values[catID]) await loadValues(catID)
+  }
+
+  async function addValue(catID: number) {
+    const code = valueInput.trim()
+    if (!code) return
+    setError("")
+    try {
+      await api.createCategoryValue(catID, code)
+      setValueInput("")
+      await loadValues(catID)
+      setValueCounts(v => ({ ...v, [catID]: (v[catID] ?? 0) + 1 }))
+    } catch {
+      setError("Value already exists in this category")
+    }
+  }
+
+  async function deleteValue(catID: number, valID: number) {
+    await api.deleteCategoryValue(valID)
+    await loadValues(catID)
+    setValueCounts(v => ({ ...v, [catID]: Math.max(0, (v[catID] ?? 1) - 1) }))
   }
 
   return (
@@ -92,19 +130,69 @@ export default function CategoryPage() {
               <p className="text-center text-gray-400 py-8 text-sm md:col-span-2">No categories yet</p>
             )}
             {categories.map(cat => (
-              <Link
+              <div
                 key={cat.id}
-                href={categoryPath(cat.name)}
-                className="bg-white rounded-lg border px-4 py-4 text-left hover:border-blue-400 hover:bg-blue-50 transition-colors"
+                className="bg-white rounded-lg border px-4 py-4 hover:border-blue-400 transition-colors"
               >
                 <div className="flex items-center justify-between gap-3">
-                  <div>
+                  <Link href={categoryPath(cat.name)} className="min-w-0">
                     <div className="font-semibold text-gray-800">{cat.name}</div>
                     <div className="text-xs text-gray-400 mt-1">{valueCounts[cat.id] ?? 0} values</div>
+                  </Link>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button
+                      onClick={() => toggleAdding(cat.id)}
+                      className="text-xs font-medium text-gray-500 hover:text-gray-800 border rounded-lg px-2 py-1"
+                    >
+                      + Value
+                    </button>
+                    <Link href={categoryPath(cat.name)} className="text-sm font-medium text-blue-600">Open</Link>
                   </div>
-                  <span className="text-sm font-medium text-blue-600">Open</span>
                 </div>
-              </Link>
+                {addingFor === cat.id && (
+                  <div className="mt-3 border-t pt-3">
+                    {values[cat.id] === undefined ? (
+                      <p className="text-xs text-gray-400">Loading values...</p>
+                    ) : values[cat.id].length === 0 ? (
+                      <p className="text-xs text-gray-400 mb-2">No values yet</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5 mb-3">
+                        {values[cat.id].map(val => (
+                          <span
+                            key={val.id}
+                            className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-mono px-2 py-1 rounded-full"
+                          >
+                            {val.code}
+                            <button
+                              onClick={() => deleteValue(cat.id, val.id)}
+                              className="text-gray-400 hover:text-red-500 leading-none"
+                              title="Remove value"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        autoFocus
+                        className="flex-1 border rounded-lg px-2 py-1.5 text-sm"
+                        placeholder="e.g. SO4"
+                        value={valueInput}
+                        onChange={event => setValueInput(event.target.value)}
+                        onKeyDown={event => event.key === "Enter" && addValue(cat.id)}
+                      />
+                      <button
+                        onClick={() => addValue(cat.id)}
+                        className="px-3 py-1.5 bg-gray-800 text-white rounded-lg text-xs font-medium hover:bg-gray-700"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         )}

@@ -10,7 +10,7 @@ import type {
   ProjectCategoryAllocation, JobCategoryAllocation,
   SubJobYearEntry,
 } from "@/lib/types"
-import BudgetTable from "@/components/BudgetTable"
+import BudgetTable, { defaultProjectOrder } from "@/components/BudgetTable"
 import { useViewMode } from "@/app/SnapshotProvider"
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { exportCategoryExcel } from "@/lib/exportExcel"
@@ -418,6 +418,409 @@ function DivisionFilter({
   )
 }
 
+// ─── Compact matrix mode: project/sub-job rows × category-value columns ──────
+
+type CompactCellRow = {
+  key: string
+  projectId: number
+  subJobName?: string
+  label: string
+  projectName: string
+  projectCode: string
+}
+
+function CompactMatrix({
+  tableData,
+  catValues,
+  tableAllocations,
+  category,
+  onSaved,
+}: {
+  tableData: FlatProject[]
+  catValues: CategoryValue[]
+  tableAllocations: Record<string, AllocationTag[]>
+  category: Category
+  onSaved: (rowKey: string, tags: AllocationTag[]) => void
+}) {
+  const [search, setSearch] = useState("")
+  const [sort, setSort] = useState<{ valueId: number | "total"; dir: "asc" | "desc" } | null>(null)
+  const [pending, setPending] = useState<Record<string, Record<number, number>>>({})
+  const [rowError, setRowError] = useState<Record<string, string>>({})
+  const [rowSaving, setRowSaving] = useState<Record<string, boolean>>({})
+  const [savingAll, setSavingAll] = useState(false)
+  const cellRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  const savedMaps = useMemo(() => {
+    const m: Record<string, Record<number, number>> = {}
+    Object.entries(tableAllocations).forEach(([key, tags]) => {
+      m[key] = Object.fromEntries(tags.map((t) => [t.tag_value_id, t.percentage]))
+    })
+    return m
+  }, [tableAllocations])
+
+  const orderedProjects = useMemo(
+    () => [...tableData].sort(defaultProjectOrder),
+    [tableData],
+  )
+
+  const allRows = useMemo(() => {
+    const out: CompactCellRow[] = []
+    orderedProjects.forEach((project) => {
+      const jobs = uniqueJobsFromFlat(project)
+      if (jobs.length === 0) {
+        out.push({ key: projectKey(project.id), projectId: project.id, label: "ทั้งโครงการ", projectName: project.name, projectCode: project.project_code })
+      } else {
+        jobs.forEach((j, idx) => {
+          out.push({
+            key: jobKey(project.id, j.name),
+            projectId: project.id,
+            subJobName: j.name,
+            label: `${idx + 1}. ${j.name}`,
+            projectName: project.name,
+            projectCode: project.project_code,
+          })
+        })
+      }
+    })
+    return out
+  }, [orderedProjects])
+
+  const rowsByKey = useMemo(() => Object.fromEntries(allRows.map((r) => [r.key, r])), [allRows])
+
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return allRows
+    return allRows.filter(
+      (r) =>
+        r.projectName.toLowerCase().includes(q) ||
+        r.projectCode.toLowerCase().includes(q) ||
+        (r.subJobName ?? "").toLowerCase().includes(q),
+    )
+  }, [allRows, search])
+
+  function rowValue(row: CompactCellRow, valueId: number | "total") {
+    const map = savedMaps[row.key] ?? {}
+    if (valueId === "total") return catValues.reduce((s, v) => s + (map[v.id] ?? 0), 0)
+    return map[valueId] ?? 0
+  }
+
+  const sortedRows = useMemo(() => {
+    if (!sort) return filteredRows
+    const copy = [...filteredRows]
+    copy.sort((a, b) => {
+      const av = rowValue(a, sort.valueId)
+      const bv = rowValue(b, sort.valueId)
+      return sort.dir === "asc" ? av - bv : bv - av
+    })
+    return copy
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredRows, sort, savedMaps, catValues])
+
+  const flat = !!search.trim() || !!sort
+  const displayRows = flat ? sortedRows : filteredRows
+
+  function toggleSort(valueId: number | "total") {
+    setSort((cur) => {
+      if (!cur || cur.valueId !== valueId) return { valueId, dir: "desc" }
+      if (cur.dir === "desc") return { valueId, dir: "asc" }
+      return null
+    })
+  }
+
+  function cellValue(rowKey: string, valueId: number): number {
+    const draft = pending[rowKey]
+    if (draft) return draft[valueId] ?? 0
+    return savedMaps[rowKey]?.[valueId] ?? 0
+  }
+
+  function rowTotal(rowKey: string): number {
+    const draft = pending[rowKey]
+    return catValues.reduce((s, v) => s + (draft ? draft[v.id] ?? 0 : savedMaps[rowKey]?.[v.id] ?? 0), 0)
+  }
+
+  function editCell(rowKey: string, valueId: number, text: string) {
+    const num = text === "" ? 0 : Number(text)
+    if (!Number.isFinite(num)) return
+    setPending((prev) => {
+      const base = prev[rowKey] ?? { ...(savedMaps[rowKey] ?? {}) }
+      return { ...prev, [rowKey]: { ...base, [valueId]: cleanPct(num) } }
+    })
+    setRowError((prev) => {
+      if (!prev[rowKey]) return prev
+      const next = { ...prev }
+      delete next[rowKey]
+      return next
+    })
+  }
+
+  function discardRow(rowKey: string) {
+    setPending((prev) => {
+      const next = { ...prev }
+      delete next[rowKey]
+      return next
+    })
+    setRowError((prev) => {
+      const next = { ...prev }
+      delete next[rowKey]
+      return next
+    })
+  }
+
+  async function saveRow(row: CompactCellRow): Promise<boolean> {
+    const draftMap = pending[row.key]
+    if (!draftMap) return true
+    const entries = Object.entries(draftMap)
+      .map(([valueId, pct]) => ({ tag_value_id: Number(valueId), percentage: cleanPct(pct) }))
+      .filter((e) => e.percentage > 0)
+    const total = entries.reduce((s, e) => s + e.percentage, 0)
+    if (entries.length > 0 && (total < 99.99 || total > 100.01)) {
+      setRowError((prev) => ({ ...prev, [row.key]: `รวม ${total.toFixed(2)}% — ต้องเป็น 100%` }))
+      return false
+    }
+    setRowSaving((prev) => ({ ...prev, [row.key]: true }))
+    try {
+      let updatedTags: AllocationTag[]
+      if (row.subJobName) {
+        await api.setJobCategoryAllocations(row.projectId, row.subJobName, category.id, entries)
+        const updated = await api.jobCategoryAllocations(row.projectId, row.subJobName)
+        updatedTags = updated.filter((t) => t.category_id === category.id)
+      } else {
+        await api.setProjectCategoryAllocations(row.projectId, category.id, entries)
+        const updated = await api.projectCategoryAllocations(row.projectId)
+        updatedTags = updated.filter((t) => t.category_id === category.id)
+      }
+      onSaved(row.key, updatedTags)
+      discardRow(row.key)
+      return true
+    } catch (e: unknown) {
+      setRowError((prev) => ({ ...prev, [row.key]: String(e) }))
+      return false
+    } finally {
+      setRowSaving((prev) => ({ ...prev, [row.key]: false }))
+    }
+  }
+
+  async function saveAll() {
+    const keys = Object.keys(pending)
+    if (keys.length === 0) return
+    setSavingAll(true)
+    for (const key of keys) {
+      const row = rowsByKey[key]
+      if (row) await saveRow(row)
+    }
+    setSavingAll(false)
+  }
+
+  function focusCell(rowKey: string, valueId: number) {
+    cellRefs.current[`${rowKey}:${valueId}`]?.focus()
+  }
+
+  function moveFocus(row: CompactCellRow, valueId: number, deltaRow: number, deltaCol: number) {
+    const order = displayRows
+    const rowIdx = order.findIndex((r) => r.key === row.key)
+    const colIdx = catValues.findIndex((v) => v.id === valueId)
+    if (rowIdx === -1 || colIdx === -1) return
+    const nextRowIdx = rowIdx + deltaRow
+    const nextColIdx = colIdx + deltaCol
+    if (nextRowIdx < 0 || nextRowIdx >= order.length) return
+    if (nextColIdx < 0 || nextColIdx >= catValues.length) return
+    focusCell(order[nextRowIdx].key, catValues[nextColIdx].id)
+  }
+
+  function handleEnter(row: CompactCellRow, valueId: number) {
+    const order = displayRows
+    const idx = order.findIndex((r) => r.key === row.key)
+    const colIdx = catValues.findIndex((v) => v.id === valueId)
+    const total = rowTotal(row.key)
+    const atTarget = total >= 99.99 && total <= 100.01
+    if (atTarget) {
+      if (idx >= 0 && idx < order.length - 1) {
+        focusCell(order[idx + 1].key, valueId)
+      }
+      return
+    }
+    if (colIdx >= 0 && colIdx < catValues.length - 1) {
+      focusCell(row.key, catValues[colIdx + 1].id)
+    }
+  }
+
+  const pendingCount = Object.keys(pending).length
+
+  function headerCell(label: string, valueId: number | "total") {
+    const active = sort?.valueId === valueId
+    return (
+      <th
+        key={String(valueId)}
+        onClick={() => toggleSort(valueId)}
+        style={{
+          padding: "6px 4px",
+          textAlign: "center",
+          color: active ? "#4338CA" : "#6B7280",
+          fontSize: 11,
+          fontWeight: 600,
+          minWidth: 68,
+          fontFamily: "monospace",
+          cursor: "pointer",
+          userSelect: "none",
+        }}
+        title="Click to sort"
+      >
+        {label} {active ? (sort!.dir === "desc" ? "↓" : "↑") : ""}
+      </th>
+    )
+  }
+
+  function renderRow(row: CompactCellRow, showProjectLabel = false) {
+    const draftMap = pending[row.key]
+    const isDirty = !!draftMap
+    const total = rowTotal(row.key)
+    return (
+      <tr key={row.key} style={{ background: isDirty ? "#FFFBEB" : undefined }}>
+        <td style={{ padding: "4px 12px 4px 24px", color: "#4B5563" }}>
+          {showProjectLabel ? (
+            <>
+              <span style={{ color: "#111827", fontWeight: 500 }}>{row.projectName}</span>
+              <span style={{ color: "#9CA3AF", marginLeft: 6 }}>· {row.label}</span>
+            </>
+          ) : (
+            row.label
+          )}
+        </td>
+        {catValues.map((v) => {
+          const val = cellValue(row.key, v.id)
+          return (
+            <td key={v.id} style={{ padding: "2px 4px", textAlign: "center" }}>
+              <input
+                ref={(el) => { cellRefs.current[`${row.key}:${v.id}`] = el }}
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={val || ""}
+                placeholder="-"
+                onChange={(e) => editCell(row.key, v.id, e.target.value)}
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    handleEnter(row, v.id)
+                    return
+                  }
+                  if (e.key === "ArrowUp") { e.preventDefault(); moveFocus(row, v.id, -1, 0); return }
+                  if (e.key === "ArrowDown") { e.preventDefault(); moveFocus(row, v.id, 1, 0); return }
+                  if (e.key === "ArrowLeft") { e.preventDefault(); moveFocus(row, v.id, 0, -1); return }
+                  if (e.key === "ArrowRight") { e.preventDefault(); moveFocus(row, v.id, 0, 1); return }
+                }}
+                style={{ width: 56, textAlign: "right", border: "1px solid #D1D5DB", borderRadius: 5, padding: "3px 5px", fontSize: 12, fontFamily: "monospace" }}
+              />
+            </td>
+          )
+        })}
+        <td
+          style={{
+            textAlign: "center",
+            fontSize: 11,
+            fontFamily: "monospace",
+            fontWeight: 600,
+            color: total === 0 ? "#D1D5DB" : total >= 99.99 && total <= 100.01 ? "#059669" : "#DC2626",
+          }}
+        >
+          {total.toFixed(0)}%
+        </td>
+        <td style={{ padding: "2px 6px", whiteSpace: "nowrap" }}>
+          {isDirty && (
+            <button
+              type="button"
+              onClick={() => discardRow(row.key)}
+              disabled={rowSaving[row.key]}
+              title="Discard changes"
+              style={{ fontSize: 11, color: "#9CA3AF", background: "none", border: "none", cursor: "pointer" }}
+            >
+              ✕
+            </button>
+          )}
+          {rowError[row.key] && <div style={{ fontSize: 10, color: "#DC2626", marginTop: 2 }}>{rowError[row.key]}</div>}
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <div className="bg-white border rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b flex items-center justify-between gap-4 flex-wrap">
+        <div className="text-sm font-semibold text-gray-700">
+          Allocation matrix
+          <span className="ml-2 text-xs font-normal text-gray-400">
+            {allRows.length} rows · {catValues.length} values
+          </span>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            className="border rounded-lg px-2 py-1 text-sm w-56"
+            placeholder="Search project or sub-job"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {sort && (
+            <button type="button" onClick={() => setSort(null)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+              Clear sort
+            </button>
+          )}
+          {catValues.length === 0 && (
+            <span className="text-xs text-amber-600">ยังไม่มี value ใน category นี้ — เพิ่มก่อนใน Manage page</span>
+          )}
+          <button
+            type="button"
+            onClick={saveAll}
+            disabled={pendingCount === 0 || savingAll}
+            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+          >
+            {savingAll ? "Saving…" : `Save all${pendingCount > 0 ? ` (${pendingCount})` : ""}`}
+          </button>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#F9FAFB" }}>
+              <th style={{ padding: "6px 12px", textAlign: "left", color: "#6B7280", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+                Project / Sub-job
+              </th>
+              {catValues.map((v) => headerCell(v.code, v.id))}
+              {headerCell("Total", "total")}
+              <th style={{ width: 40 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.length === 0 && (
+              <tr>
+                <td colSpan={catValues.length + 3} style={{ padding: "32px 16px", textAlign: "center", color: "#6B7280" }}>
+                  No rows match
+                </td>
+              </tr>
+            )}
+            {!flat &&
+              orderedProjects.flatMap((project) => {
+                const rows = allRows.filter((r) => r.projectId === project.id)
+                if (rows.length === 0) return []
+                return [
+                  <tr key={`hdr-${project.id}`} style={{ background: "#F3F4F6" }}>
+                    <td colSpan={catValues.length + 3} style={{ padding: "5px 12px", fontWeight: 600, color: "#374151" }}>
+                      {project.name}{" "}
+                      <span style={{ color: "#9CA3AF", fontWeight: 400, fontFamily: "monospace", fontSize: 11 }}>{project.project_code}</span>
+                    </td>
+                  </tr>,
+                  ...rows.map((row) => renderRow(row)),
+                ]
+              })}
+            {flat && displayRows.map((row) => renderRow(row, true))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function CategorySummaryPage() {
   const params = useParams()
   const categoryName = categoryNameFromParam(params.category)
@@ -449,6 +852,9 @@ export default function CategorySummaryPage() {
   const [draft, setDraft] = useState<DraftRow[]>([])
   const [draftSaving, setDraftSaving] = useState(false)
   const [draftError, setDraftError] = useState("")
+
+  // Compact matrix mode: project/sub-job rows × category-value columns, cell = %
+  const [compact, setCompact] = useState(false)
 
   // ─── Inline allocation ──────────────────────────────────────────────────────
 
@@ -717,6 +1123,15 @@ export default function CategorySummaryPage() {
     return visibleProjects
   }, [visibleProjects, allocFilter, isProjectAllocated])
 
+  function handleCompactSaved(rowKey: string, tags: AllocationTag[]) {
+    setTableAllocations((prev) => ({ ...prev, [rowKey]: tags }))
+    setSelectionKeys((prev) => {
+      const next = new Set(prev)
+      if (tags.length > 0) next.add(rowKey); else next.delete(rowKey)
+      return next
+    })
+  }
+
   const selectStyle: React.CSSProperties = {
     background: "#fff",
     border: "1px solid #D1D5DB",
@@ -749,6 +1164,17 @@ export default function CategorySummaryPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCompact((c) => !c)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium border ${
+                compact
+                  ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                  : "border-gray-200 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              {compact ? "✓ Compact" : "Compact"}
+            </button>
             <button
               type="button"
               onClick={handleExport}
@@ -1193,6 +1619,15 @@ export default function CategorySummaryPage() {
               })()}
             </div>
 
+            {compact ? (
+              <CompactMatrix
+                tableData={tableData}
+                catValues={catValues}
+                tableAllocations={tableAllocations}
+                category={category}
+                onSaved={handleCompactSaved}
+              />
+            ) : (
             <BudgetTable
               data={tableData}
               years={activeYears}
@@ -1273,6 +1708,7 @@ export default function CategorySummaryPage() {
                 },
               }}
             />
+            )}
           </>
         )}
       </main>
