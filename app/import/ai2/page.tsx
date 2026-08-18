@@ -608,7 +608,10 @@ export default function AIImport2Page() {
             </table>
           </div>
 
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">2. ใหม่ ({fresh.length})</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+            <span>2. ใหม่ ({fresh.length})</span>
+            <span className="font-normal text-gray-400">— ถ้าจริง ๆ แล้วเป็นโครงการเดิม (ชื่อ/ประเภทเปลี่ยนจนจับคู่อัตโนมัติไม่ได้) กดจับคู่กับรายการในกลุ่ม 4 ได้</span>
+          </h2>
           <div className="border rounded-lg overflow-x-auto mb-6">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-500 text-xs">
@@ -618,6 +621,7 @@ export default function AIImport2Page() {
                   <th className="text-left px-3 py-2">ปี</th>
                   <th className="text-left px-3 py-2">ประเภท</th>
                   <th className="text-right px-3 py-2">วงเงินดำเนินการ (ใหม่)</th>
+                  <th className="text-left px-3 py-2"></th>
                 </tr>
               </thead>
               <tbody>
@@ -628,9 +632,14 @@ export default function AIImport2Page() {
                     <td className="px-3 py-2">{it.year}</td>
                     <td className="px-3 py-2">{it.project_type}</td>
                     <td className="px-3 py-2 text-right tabular-nums text-blue-600 font-medium">{fmt3(it.new_budget_committed + it.new_budget_invest)}</td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => openMatchPopup(it.row_key)} className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200">
+                        จับคู่กับรายการค้างปีก่อน
+                      </button>
+                    </td>
                   </tr>
                 ))}
-                {fresh.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
+                {fresh.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">ไม่มี</td></tr>}
               </tbody>
             </table>
           </div>
