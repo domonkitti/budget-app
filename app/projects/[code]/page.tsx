@@ -126,6 +126,14 @@ function findNavTarget(tr: Element, dataCol: string, direction: "up" | "down" | 
   return null
 }
 
+// Rapid-fire arrow/Enter presses (key repeat) can otherwise queue up multiple
+// overlapping navigate() calls before the first one's setTimeout has even
+// opened the next cell — each reading a still-stale DOM and racing the
+// others, which was losing the edit focus entirely mid-navigation. One
+// module-level lock serializes them: a keystroke that lands while a move is
+// still in flight is dropped rather than risking a stale target.
+let navLock = false
+
 function EditableCell({
   value, isPending, isEditing, editValue,
   isUndo, dataCol,
@@ -144,13 +152,30 @@ function EditableCell({
   // Commits the current value, then — once the row has re-rendered with the
   // committed (and any forward-recalculated) values — clicks the next cell in
   // `direction`, reusing its normal onStartEdit click path so navigation never
-  // needs its own copy of the "how does this cell open" logic.
+  // needs its own copy of the "how does this cell open" logic. Falls back to
+  // re-clicking the cell we just left if no neighbor exists in that direction
+  // (row/column boundary), so focus never just vanishes.
   function navigate(direction: "up" | "down" | "left" | "right") {
+    if (navLock) return
     const tr = inputRef.current?.closest("tr")
-    onCommit()
-    if (!tr) return
+    navLock = true
+    try {
+      onCommit()
+    } catch (e) {
+      console.error("[EditableCell] commit failed during navigation", e)
+      navLock = false
+      return
+    }
+    if (!tr) { navLock = false; return }
     setTimeout(() => {
-      findNavTarget(tr, dataCol, direction)?.click()
+      try {
+        const target = findNavTarget(tr, dataCol, direction) ?? tr.querySelector<HTMLElement>(`[data-col="${dataCol}"]`)
+        target?.click()
+      } catch (e) {
+        console.error("[EditableCell] navigation click failed", e)
+      } finally {
+        navLock = false
+      }
     }, 0)
   }
 
