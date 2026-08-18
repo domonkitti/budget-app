@@ -247,6 +247,25 @@ export default function ReportListPage() {
                             </svg>
                           </div>
                         </Link>
+                        <Link
+                          href={`/report/${group.id}/${report.id}`}
+                          title="ดูรายงานนี้"
+                          className="text-gray-300 hover:text-gray-700 p-1 shrink-0"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                            <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+                          </svg>
+                        </Link>
+                        <Link
+                          href={`/report/admin/${group.id}/${report.id}`}
+                          title="แก้ไขรายงานนี้ (โหมด Admin)"
+                          className="text-gray-300 hover:text-indigo-500 p-1 shrink-0"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793 3 14.172V17h2.828l8.379-8.379-2.828-2.828z" />
+                          </svg>
+                        </Link>
                         <button
                           onClick={() => deleteReport(report.id)}
                           title="ลบรายงานนี้"

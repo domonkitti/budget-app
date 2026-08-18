@@ -70,6 +70,7 @@ export const api = {
     get<ProjectDetail>(`/projects/${code}`),
   updateProjectInfo: (code: string, data: { name: string; item_no: string | null; year: number; project_type: string; division: string | null; department: string | null; group_name: string | null }) =>
     patchJson<{ ok: string }>(`/projects/${code}`, data),
+  deleteProject: (code: string) => del(`/projects/${code}`),
   filterOptions: () => get<FilterOptions>("/filter-options"),
   flatProjects: (params?: Record<string, string>) =>
     get<FlatProject[]>("/projects/flat", params),

@@ -52,6 +52,7 @@ function reportMarkdown(report: Report, groupName: string): string {
   lines.push(`- ระยะเวลา: ${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear}) | พื้นที่: ${bi.area || '-'}`)
   lines.push(`- วงเงินลงทุนทั้งสิ้น: ${n(bi.totalInvestment)} | วงเงินปีนี้: ${n(bi.yearInvestment)} | เป้าเบิกจ่ายปีนี้: ${n(bi.disbursementTarget)}${bi.operatingBudget != null ? ` | งบทำการ: ${n(bi.operatingBudget)}` : ''}`)
   if (bi.workNature) lines.push(`- ลักษณะงาน: ${bi.workNature}`)
+  if (bi.executionType) lines.push(`- ดำเนินการโดย: ${bi.executionType}`)
   if (bi.approval) lines.push(`- อนุมัติโดย: ${bi.approval}`)
   if (bi.objectives.length) lines.push(`- วัตถุประสงค์: ${bi.objectives.join(' / ')}`)
 
@@ -76,6 +77,17 @@ function reportMarkdown(report: Report, groupName: string): string {
       lines.push(`- หมวด ${c.หมวด} ${c.name}${c.formRef ? ` (${c.formRef})` : ''}: วงเงิน ${n(c.yearAmount)}${byYear ? ` | เบิกจ่ายรายปี: ${byYear}` : ''}`)
     }
     if (d.budget.reserve) lines.push(`- สำรองค่าปรับราคา: ${n(d.budget.reserve)}`)
+  }
+
+  if (d.workQuantity.items.length) {
+    lines.push(`ปริมาณงาน (ไม่ใช่หน่วยเงิน):`)
+    for (const it of d.workQuantity.items) {
+      const byYear = it.byYear.map(y => `${y.year}=${y.amount}`).join(', ')
+      lines.push(`- ${it.no}. ${it.name}: รวม ${it.totalQuantity}${it.unit ? ` ${it.unit}` : ''}${byYear ? ` | ทำรายปี: ${byYear}` : ''}`)
+    }
+    if (d.workQuantity.progressByYear.length) {
+      lines.push(`- ความคืบหน้า % (สรุปรวม, กรอกเอง): ${d.workQuantity.progressByYear.map(y => `${y.year}=${y.amount}`).join(', ')}`)
+    }
   }
 
   for (const ey of d.equipment) {

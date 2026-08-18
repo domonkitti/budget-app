@@ -48,6 +48,7 @@ export default function BasicInfoSection({ basicInfo: bi, isAdmin, hiddenFields,
         <Field fieldKey="area" label="พื้นที่/ระยะเวลา" isAdmin={isAdmin} hiddenFields={hiddenFields} onToggle={onToggleField}>
           <div className="space-y-2">
             <Row label="ลักษณะงาน" value={bi.workNature} isAdmin={isAdmin} onSave={v => onChange?.({ workNature: v })} />
+            <Row label="ดำเนินการโดย" value={bi.executionType} isAdmin={isAdmin} onSave={v => onChange?.({ executionType: v })} />
             <Row label="พื้นที่" value={bi.area} isAdmin={isAdmin} onSave={v => onChange?.({ area: v })} />
             <Row label="ระยะเวลา" value={`${durationYears(bi.startYear, bi.endYear)} ปี (${bi.startYear}–${bi.endYear})`} />
           </div>

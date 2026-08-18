@@ -1,6 +1,7 @@
 'use client'
 
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { PageHighlight } from '@/lib/reportTypes'
 
 interface Props {
@@ -25,10 +26,52 @@ function borderClass(color?: string) {
   return BOX_COLORS.find(c => c.key === color)?.border ?? BOX_COLORS[0].border
 }
 
+// Finds the card content box (each section's own ".overflow-auto" scrollbox) that this
+// highlight's page-relative center point currently sits over, if any — so the box can be
+// portaled inside it and scroll natively with that card's content. Without this, a box drawn
+// over a tall table stays pinned to the page while the table scrolls independently underneath it.
+function findScrollTarget(pageBodyEl: HTMLElement, h: PageHighlight): HTMLElement | null {
+  const pageRect = pageBodyEl.getBoundingClientRect()
+  const centerX = pageRect.left + h.x + h.w / 2
+  const centerY = pageRect.top + h.y + h.h / 2
+  const candidates = pageBodyEl.querySelectorAll<HTMLElement>('.overflow-auto')
+  for (const cand of candidates) {
+    const r = cand.getBoundingClientRect()
+    if (centerX >= r.left && centerX <= r.right && centerY >= r.top && centerY <= r.bottom) return cand
+  }
+  return null
+}
+
 // Plain mouse-event dragging (not react-grid-layout — that's grid-cell based, this is free
 // pixel positioning) clamped to the page's own content box, so it can be moved around freely
-// but never dragged onto a different page.
+// but never dragged onto a different page. Stored x/y/w/h always stay page-relative regardless
+// of where the box is currently portaled — only the rendered position is content-relative.
 export default function PageHighlightBox({ highlight, containerW, containerH, isAdmin, onChange, onDelete }: Props) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const [target, setTarget] = useState<HTMLElement | null>(null)
+  const [contentPos, setContentPos] = useState<{ left: number; top: number } | null>(null)
+
+  // Re-detects which card (if any) this box overlaps, and its position within that card's own
+  // scrollable content, whenever the box's own geometry changes (drag/resize commit, or first
+  // mount) — never on scroll itself, since once portaled the browser scrolls it natively for free.
+  useEffect(() => {
+    const pageBodyEl = boxRef.current?.closest<HTMLElement>('.page-card-body') ?? null
+    if (!pageBodyEl) { setTarget(null); setContentPos(null); return }
+    const found = findScrollTarget(pageBodyEl, highlight)
+    if (found) {
+      if (getComputedStyle(found).position === 'static') found.style.position = 'relative'
+      const pageRect = pageBodyEl.getBoundingClientRect()
+      const foundRect = found.getBoundingClientRect()
+      setContentPos({
+        left: (pageRect.left + highlight.x - foundRect.left) + found.scrollLeft,
+        top: (pageRect.top + highlight.y - foundRect.top) + found.scrollTop,
+      })
+    } else {
+      setContentPos(null)
+    }
+    setTarget(found)
+  }, [highlight.x, highlight.y, highlight.w, highlight.h])
+
   function startDrag(e: ReactMouseEvent) {
     if (!isAdmin) return
     e.stopPropagation()
@@ -71,11 +114,14 @@ export default function PageHighlightBox({ highlight, containerW, containerH, is
     window.addEventListener('mouseup', onUp)
   }
 
-  return (
+  const pos = target && contentPos ? contentPos : { left: highlight.x, top: highlight.y }
+
+  const box = (
     <div
+      ref={boxRef}
       onMouseDown={startDrag}
-      className={`absolute border-2 bg-transparent rounded-sm ${borderClass(highlight.color)} ${isAdmin ? 'cursor-move pointer-events-auto' : 'pointer-events-none'}`}
-      style={{ left: highlight.x, top: highlight.y, width: highlight.w, height: highlight.h }}
+      className={`absolute z-40 border-2 bg-transparent rounded-sm ${borderClass(highlight.color)} ${isAdmin ? 'cursor-move pointer-events-auto' : 'pointer-events-none'}`}
+      style={{ left: pos.left, top: pos.top, width: highlight.w, height: highlight.h }}
     >
       {isAdmin && (
         <>
@@ -109,4 +155,6 @@ export default function PageHighlightBox({ highlight, containerW, containerH, is
       )}
     </div>
   )
+
+  return target ? createPortal(box, target) : box
 }

@@ -31,6 +31,7 @@ export interface ReportData {
   procurements: ProcurementPlan[]
   history: HistoryData
   compareTable: CompareTableData
+  workQuantity: WorkQuantityData
 }
 
 export interface BasicInfo {
@@ -46,6 +47,7 @@ export interface BasicInfo {
   status: ProjectStatus
   approval: string
   workNature: string  // ลักษณะงาน
+  executionType: string  // ดำเนินการเอง/จ้างเหมา/จ้างเหมาแบบ Turnkey (ข้อ 14.1)
   area: string
   durationYears: number
   startYear: number
@@ -149,6 +151,29 @@ export interface CompareTableData {
 
 export function emptyCompareTable(): CompareTableData {
   return { columns: [], rows: [] }
+}
+
+// Physical (non-money) work progress by activity — e.g. "งานย้ายแนวระบบไฟฟ้า" totalQuantity
+// 2,256.61 วงจร-กม., with byYear tracking how much of that was actually done each year.
+// Same one-item-per-activity, freeform-afterward shape as BudgetCategory, just quantity+unit
+// instead of money.
+export interface WorkQuantityItem {
+  no: number
+  name: string
+  unit: string
+  totalQuantity: number
+  byYear: { year: number; amount: number }[]
+}
+
+export interface WorkQuantityData {
+  items: WorkQuantityItem[]
+  // Manual "done so far" summary row, one value per year — admin-typed, never derived from
+  // items[], since items can mix incompatible units (กม., ต้น, จุด, ...) that don't sum cleanly.
+  progressByYear: { year: number; amount: number }[]
+}
+
+export function emptyWorkQuantity(): WorkQuantityData {
+  return { items: [], progressByYear: [] }
 }
 
 // Same 8 metrics as /compare's METRICS list, ผูกพัน-before-ลงทุน order — kept here too so the
@@ -293,6 +318,7 @@ export const DEFAULT_PRESET: Preset = {
     { key: 'procurement',  visible: true, width: 'full' },
     { key: 'history',      visible: false, width: 'full' },
     { key: 'compareTable', visible: false, width: 'full' },
+    { key: 'workQuantity', visible: false, width: 'full' },
   ],
   layout: [
     { i: 'header',         x: 0, y: 0,  w: 12, h: 4,  minH: 3, minW: 3, page: 1 },
@@ -303,6 +329,7 @@ export const DEFAULT_PRESET: Preset = {
     { i: 'procurement',    x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 6, page: 5 },
     { i: 'history',        x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 4, page: 6 },
     { i: 'compareTable',   x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 4, page: 7 },
+    { i: 'workQuantity',   x: 0, y: 0,  w: 12, h: 10, minH: 6, minW: 4, page: 8 },
   ],
   pages: [1, 2, 3, 4, 5],
   highlights: [],

@@ -15,6 +15,7 @@ import EquipmentSection from './sections/EquipmentSection'
 import GanttSection from './sections/GanttSection'
 import HistorySection from './sections/HistorySection'
 import CompareSection from './sections/CompareSection'
+import WorkQuantitySection from './sections/WorkQuantitySection'
 import PageHighlightBox from './PageHighlightBox'
 
 // A4 landscape page at 96 CSS px/inch (297mm x 210mm) — must match SLIDE_WIDTH_PX/SLIDE_HEIGHT_PX
@@ -38,6 +39,7 @@ const STATIC_LABELS: Record<string, string> = {
   procurement: 'แผนจัดซื้อ (009)',
   history: 'ข้อมูลย้อนหลัง',
   compareTable: 'ตารางเปรียบเทียบ',
+  workQuantity: 'ปริมาณงาน',
 }
 
 function sectionLabel(key: string) {
@@ -601,6 +603,16 @@ export default function ReportView({ initialReport, isAdmin, savedPresets = [], 
             data={data.compareTable}
             isAdmin={effectiveAdmin}
             onChange={effectiveAdmin ? (ct) => patchData({ compareTable: ct }) : undefined}
+          />
+        )
+      case 'workQuantity':
+        return (
+          <WorkQuantitySection
+            data={data.workQuantity}
+            startYear={data.basicInfo.startYear}
+            endYear={data.basicInfo.endYear}
+            isAdmin={effectiveAdmin}
+            onChange={effectiveAdmin ? (wq) => patchData({ workQuantity: wq }) : undefined}
           />
         )
       default:

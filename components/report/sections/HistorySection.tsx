@@ -36,6 +36,7 @@ function cellBg(color?: string) {
 export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: Props) {
   const [showImport, setShowImport] = useState(false)
   const [pickerFor, setPickerFor] = useState<{ gi: number; ri: number; year: number } | null>(null)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const years = Array.from(
     new Set(data.groups.flatMap(g => g.rows.flatMap(r => r.amounts.map(a => a.year))))
   ).sort((a, b) => a - b)
@@ -136,6 +137,17 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
     return group.rows.reduce((s, r) => s + (r.amounts.find(a => a.year === year)?.amount ?? 0), 0)
   }
 
+  function toggleGroup(name: string) {
+    setCollapsedGroups(s => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n })
+  }
+
+  // คงเหลือผูกพันไป is derived (ผูกพัน + ลงทุน - ยกเลิกไม่ผูกพัน) rather than typed in directly,
+  // so it doubles as the คงเหลือ group's total row instead of the generic รวม(ผูกพัน+ลงทุน) row.
+  function remainCarryForward(group: HistoryGroup, year: number): number {
+    const amt = (name: string) => group.rows.find(r => r.name === name)?.amounts.find(a => a.year === year)?.amount ?? 0
+    return amt('ผูกพัน') + amt('ลงทุน') - amt('ยกเลิกไม่ผูกพัน')
+  }
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden h-full flex flex-col">
       <div className="px-6 py-4 border-b border-gray-200 bg-gray-100 shrink-0 flex items-center justify-between gap-3">
@@ -176,24 +188,37 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
             </tr>
           </thead>
           <tbody>
-            {data.groups.map((group, gi) => (
+            {data.groups.map((group, gi) => {
+              const isRemainGroup = group.name === 'คงเหลือ'
+              const collapsed = collapsedGroups.has(group.name)
+              return (
               <Fragment key={group.name}>
                 <tr>
-                  <td className={`${FIRST_CELL} z-10 font-semibold text-teal-700 underline decoration-teal-300`}>
-                    {group.name}
+                  <td className={`${FIRST_CELL} z-10 font-semibold text-teal-700`}>
+                    <button onClick={() => toggleGroup(group.name)} className="flex items-center gap-1.5 hover:text-teal-900">
+                      <svg className={`w-3.5 h-3.5 shrink-0 transition-transform ${collapsed ? '-rotate-90' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                      <span className="underline decoration-teal-300">{group.name}</span>
+                    </button>
                   </td>
                   {years.map(y => <td key={y} className={CELL} />)}
                   {isAdmin && onChange && <td className="border-0" />}
                 </tr>
-                {group.rows.map((row, ri) => (
+                {group.rows.map((row, ri) => {
+                  // In the คงเหลือ group, คงเหลือผูกพันไป is derived rather than typed in, and
+                  // stands in for that group's total row — see remainCarryForward() above.
+                  const isComputedRow = isRemainGroup && row.name === 'คงเหลือผูกพันไป'
+                  if (collapsed && !isComputedRow) return null
+                  return (
                   <tr
                     key={`${group.name}-${ri}`}
                     onDragOver={isAdmin && onChange ? e => e.preventDefault() : undefined}
                     onDrop={isAdmin && onChange ? e => handleRowDrop(e, gi, ri) : undefined}
                   >
-                    <td className={`${FIRST_CELL} z-10 text-gray-700`}>
+                    <td className={`${FIRST_CELL} z-10 text-gray-700 ${isComputedRow ? 'font-semibold text-gray-900' : ''}`}>
                       <div className="flex items-center gap-1.5">
-                        {isAdmin && onChange && (
+                        {isAdmin && onChange && !isComputedRow && (
                           <span
                             draggable
                             onDragStart={e => handleRowDragStart(e, gi, ri)}
@@ -203,7 +228,7 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
                             ⠿
                           </span>
                         )}
-                        {isAdmin && onChange ? (
+                        {isAdmin && onChange && !isComputedRow ? (
                           <input
                             value={row.name}
                             onChange={e => patchRowName(gi, ri, e.target.value)}
@@ -214,21 +239,22 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
                     </td>
                     {years.map(y => {
                       const entry = row.amounts.find(a => a.year === y)
+                      const value = isComputedRow ? remainCarryForward(group, y) : (entry?.amount ?? 0)
                       const isPicking = isAdmin && !!onChange && pickerFor?.gi === gi && pickerFor.ri === ri && pickerFor.year === y
                       return (
                         <td
                           key={y}
-                          className={`${CELL} relative text-right font-mono text-gray-700 ${cellBg(entry?.color)}`}
-                          onContextMenu={isAdmin && onChange ? e => { e.preventDefault(); setPickerFor({ gi, ri, year: y }) } : undefined}
-                          title={isAdmin && onChange ? 'คลิกขวาเพื่อไฮไลต์' : undefined}
+                          className={`${CELL} relative text-right font-mono ${isComputedRow ? 'font-semibold text-gray-900' : 'text-gray-700'} ${cellBg(entry?.color)}`}
+                          onContextMenu={isAdmin && onChange && !isComputedRow ? e => { e.preventDefault(); setPickerFor({ gi, ri, year: y }) } : undefined}
+                          title={isAdmin && onChange && !isComputedRow ? 'คลิกขวาเพื่อไฮไลต์' : undefined}
                         >
-                          {isAdmin && onChange ? (
+                          {isAdmin && onChange && !isComputedRow ? (
                             <NumberInput
                               value={entry?.amount ?? 0}
                               onChange={v => patchRowAmount(gi, ri, y, v)}
                               className="w-full outline-none text-sm bg-transparent text-right font-mono"
                             />
-                          ) : fmtMillion(entry?.amount ?? 0)}
+                          ) : fmtMillion(value)}
                           {isPicking && (
                             <div className="absolute z-30 top-full right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-1.5 flex items-center gap-1 whitespace-nowrap">
                               {HIGHLIGHT_COLORS.map(c => (
@@ -253,25 +279,30 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
                     })}
                     {isAdmin && onChange && (
                       <td className="border-0 px-1">
-                        <button onClick={() => removeRow(gi, ri)} className="text-gray-300 hover:text-red-400 p-1">
-                          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                          </svg>
-                        </button>
+                        {!isComputedRow && (
+                          <button onClick={() => removeRow(gi, ri)} className="text-gray-300 hover:text-red-400 p-1">
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>
-                ))}
-                <tr>
-                  <td className={`${FIRST_CELL} z-10 font-semibold text-gray-900`}>รวม(ผูกพัน+ลงทุน)</td>
-                  {years.map(y => (
-                    <td key={y} className={`${CELL} text-right font-semibold font-mono text-gray-900`}>
-                      {fmtMillion(groupTotal(group, y))}
-                    </td>
-                  ))}
-                  {isAdmin && onChange && <td className="border-0" />}
-                </tr>
-                {isAdmin && onChange && (
+                  )
+                })}
+                {!isRemainGroup && (
+                  <tr>
+                    <td className={`${FIRST_CELL} z-10 font-semibold text-gray-900`}>รวม(ผูกพัน+ลงทุน)</td>
+                    {years.map(y => (
+                      <td key={y} className={`${CELL} text-right font-semibold font-mono text-gray-900`}>
+                        {fmtMillion(groupTotal(group, y))}
+                      </td>
+                    ))}
+                    {isAdmin && onChange && <td className="border-0" />}
+                  </tr>
+                )}
+                {isAdmin && onChange && !collapsed && (
                   <tr>
                     <td colSpan={years.length + 2} className="border-0 pt-1.5 pb-2.5">
                       <button
@@ -284,7 +315,8 @@ export default function HistorySection({ data, fiscalYear, isAdmin, onChange }: 
                   </tr>
                 )}
               </Fragment>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

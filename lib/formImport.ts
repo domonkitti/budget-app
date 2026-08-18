@@ -1,9 +1,9 @@
 import type {
   ReportData, BasicInfo, Benefits, BudgetCategory, EquipmentYear, EquipmentItem,
-  ProcurementPlan, ProcurementActivity, ProcurementDetail, ProcurementMonth,
+  ProcurementPlan, ProcurementActivity, ProcurementDetail, ProcurementMonth, WorkQuantityItem,
   NecessityType, InvestmentType, ProjectStatus,
 } from './reportTypes'
-import { ACTIVE_YEAR, durationYears, emptyHistoryData, emptyCompareTable } from './reportTypes'
+import { ACTIVE_YEAR, durationYears, emptyHistoryData, emptyCompareTable, emptyWorkQuantity } from './reportTypes'
 
 export function blankReportData(): ReportData {
   const year = ACTIVE_YEAR
@@ -20,6 +20,7 @@ export function blankReportData(): ReportData {
       status: 'ใหม่',
       approval: '',
       workNature: '',
+      executionType: '',
       area: '',
       durationYears: 1,
       startYear: year,
@@ -47,6 +48,7 @@ export function blankReportData(): ReportData {
     equipment: [],
     history: emptyHistoryData(),
     compareTable: emptyCompareTable(),
+    workQuantity: emptyWorkQuantity(),
     procurements: [{
       fiscalYear: year,
       activities: [
@@ -221,6 +223,7 @@ const SCHEMA_EXAMPLE = `{
     "status": "ใหม่",            // ข้อ 2.4
     "approval": "",              // ข้อ 2.5 เช่น "ผวก. ลงนาม วันที่ ..." เฉพาะช่องที่ถูกเลือก
     "workNature": "",            // ลักษณะงาน เช่น "จ้างเหมา 100%" (จากแบบ 004/3 ข้อ 14.1 ถ้ามี)
+    "executionType": "",         // ข้อ 14.1 ช่อง (Ö) ดำเนินการเอง/จ้างเหมา/จ้างเหมาแบบ Turnkey — สรุปเป็นข้อความเช่น "จ้างเหมา 60%, ดำเนินการเอง 40%" ระบุเฉพาะช่องที่ติ๊ก ถ้าไม่มี % ให้ใส่แค่ชื่อประเภทคั่นด้วย ","
     "area": "",                  // ข้อ 2.6 พื้นที่ดำเนินการ
     "durationYears": 1,          // ข้อ 2.7
     "startYear": 2570,           // ปีเริ่มต้น (พ.ศ.)
@@ -272,6 +275,15 @@ const SCHEMA_EXAMPLE = `{
       "group": ""                // ชื่องานย่อย — ใส่เฉพาะเมื่อไฟล์มีชีต 007 มากกว่า 1 ชุด (ดูกติกาข้อ 11) ไม่งั้นเว้นว่าง
     }]
   }],
+  "workQuantity": {              // จากแบบ งป.004/3 ข้อ 14.1 ตารางกิจกรรมหลัก — เฉพาะกรณีคอลัมน์ "หน่วยนับ" ไม่ใช่หน่วยเงิน (ดูกติกาข้อ 10)
+    "items": [{
+      "no": 1,                   // ลำดับกิจกรรมหลัก
+      "name": "",                // ชื่อกิจกรรมหลัก (คอลัมน์ "กิจกรรมหลัก")
+      "unit": "",                // หน่วยนับ เช่น กม./ต้น/จุด/ชุด/วงจร-กม.
+      "totalQuantity": 0,        // คอลัมน์ "รวม" ของแถวนี้ — ปริมาณงานทั้งหมดตลอดโครงการ
+      "byYear": [{ "year": 2568, "amount": 0 }]  // ปริมาณที่จะดำเนินการในแต่ละปีงบประมาณ ตามคอลัมน์ปีใต้ "ระยะเวลาดำเนินการ"
+    }]
+  },
   "procurements": [{             // จากแบบ งป.009 — 1 รายการต่อปีงบประมาณที่พบ (รวมทุกชีต 009 ของปีนั้น)
     "fiscalYear": 2570,
     "activities": [{
@@ -290,7 +302,7 @@ const OUTPUT_RULE = 'ให้ตอบกลับเป็น JSON ตาม�
 
 const COMMON_RULES = `1. หน่วยเงิน: แบบ 003 / 004 / 007 กรอกเป็น "บาท" ให้แปลงเป็น "ล้านบาท" (หารด้วย 1,000,000) ก่อนใส่ใน JSON
    ยกเว้น "unitPrice" ของ equipment ให้คงเป็นบาทตามเดิม / แบบ 009 เป็นล้านบาทอยู่แล้ว ไม่ต้องแปลง
-2. ช่องเลือกที่มีเครื่องหมาย ü หรือ ✓ หรือ / หรือ X ในวงเล็บ คือช่องที่ถูกเลือก
+2. ช่องเลือกที่มีเครื่องหมาย ü หรือ Ö หรือ ✓ หรือ / หรือ X ในวงเล็บ คือช่องที่ถูกเลือก (ข้อ 14.1 อาจติ๊กได้มากกว่า 1 ช่องพร้อมกัน เช่น ทั้งดำเนินการเองและจ้างเหมาบางส่วน)
 3. ปีทั้งหมดเป็น พ.ศ. ตัวเลข เช่น 2568
 4. ค่า enum (necessity, investmentType, status) ต้องตรงกับตัวเลือกใน comment เท่านั้น ถ้าไม่แน่ใจใช้ "อื่นๆ" หรือ "ใหม่"
 5. ข้อมูลที่ไม่พบในฟอร์ม: string ใช้ "" / number ใช้ 0 / array ใช้ []  ห้ามแต่งข้อมูลขึ้นเอง
@@ -299,7 +311,13 @@ const COMMON_RULES = `1. หน่วยเงิน: แบบ 003 / 004 / 007 
 8. แถวในแบบ 007 ที่ขึ้นต้นด้วย "รวม" (เช่น "รวมงานจัดหาวีทีและซีที") คือแถวสรุปยอดของกลุ่มรายการก่อนหน้า ไม่ใช่วัสดุจริง
    ห้ามใส่เป็น equipment item เด็ดขาด — แอประบบคำนวณผลรวมของตารางเองจากรายการจริงทั้งหมดอยู่แล้ว ถ้าใส่แถว "รวม" ปนไปด้วย
    ยอดรวมจะเพี้ยนเป็น 2 เท่า
-9. ห้ามข้ามหรือสรุปย่อรายการที่มีข้อมูลจริงแม้ตารางจะยาว ต้องแปลงทุกแถว/ทุกเลขลำดับที่ปรากฏให้ครบ ไม่ใช่เลือกมาเฉพาะบางแถว`
+9. ห้ามข้ามหรือสรุปย่อรายการที่มีข้อมูลจริงแม้ตารางจะยาว ต้องแปลงทุกแถว/ทุกเลขลำดับที่ปรากฏให้ครบ ไม่ใช่เลือกมาเฉพาะบางแถว
+10. "workQuantity": มาจากตารางกิจกรรมหลักในแบบ 004/3 ข้อ 14.1 (คอลัมน์ กิจกรรมหลัก/หน่วยนับ/ระยะเวลาดำเนินการ/รวม)
+    ใส่ก็ต่อเมื่อคอลัมน์ "หน่วยนับ" ของแถวนั้นไม่ใช่หน่วยเงิน (ไม่ใช่ "บาท"/"ล้านบาท") — ถ้าเป็นหน่วยเงินให้ข้ามแถวนั้นไป (ซ้ำกับ budget อยู่แล้ว)
+    คอลัมน์ย่อยใต้ "ระยะเวลาดำเนินการ" แต่ละคอลัมน์คือปีงบประมาณหนึ่งปี (ดูแถวหัวตาราง "ปีงบประมาณ"/"ปี xx") ใส่เป็น byYear ของแถวนั้น
+    ถ้าไม่พบกิจกรรมที่หน่วยนับไม่ใช่เงินเลยในทั้งไฟล์ ให้ "items": []
+    (ชื่อรายการในแบบ 004/4 บางอันมีตัวเลข+หน่วยนับที่ไม่ใช่เงินฝังอยู่ท้ายชื่อ เช่น "งานย้ายแนวระบบไฟฟ้า 2,256.61 วงจร-กม."
+    — ถ้าตาราง 004/3 ไม่มีข้อมูลนี้แต่พบรูปแบบนี้ใน 004/4 ให้ใช้เป็น totalQuantity แทนได้ โดยเว้น byYear เป็น [] เนื่องจากไม่มีข้อมูลรายปี)`
 
 const GANTT_RULES = `ขั้นตอนย่อยที่ขึ้นต้นด้วย "-" (เช่น "- ทำสัญญา") ให้เป็น details ของกิจกรรมแม่ (แถวหลักก่อนหน้า) พร้อม months ของแถวย่อยเอง
    แถวเบิกจ่ายเงินให้ใช้ชื่อ "เบิกจ่าย" และใส่จำนวนเงินเป็น amount ของเดือนตามคอลัมน์ที่ตัวเลขอยู่ (ไม่รวมคอลัมน์ "รวม")`
@@ -324,10 +342,10 @@ ${SCHEMA_EXAMPLE}
 
 กติกาสำคัญ:
 ${COMMON_RULES}
-10. ในแบบ 009 สัญลักษณ์ ■ คือเซลล์ที่ถูกระบายสีเป็น Gantt chart — เทียบคอลัมน์ของ ■ กับแถวหัวตารางเดือน (ม.ค.–ธ.ค.)
+11. ในแบบ 009 สัญลักษณ์ ■ คือเซลล์ที่ถูกระบายสีเป็น Gantt chart — เทียบคอลัมน์ของ ■ กับแถวหัวตารางเดือน (ม.ค.–ธ.ค.)
    แล้วใส่ { "active": true } ให้เดือนนั้นของแถวนั้น
    ${GANTT_RULES}
-11. ${SUBJOB_GROUP_RULE}
+12. ${SUBJOB_GROUP_RULE}
 
 ข้อมูลจากไฟล์:
 
@@ -349,9 +367,9 @@ ${SCHEMA_EXAMPLE}
 
 กติกาสำคัญ:
 ${COMMON_RULES}
-10. ในแบบ 009 ตาราง Gantt ใช้การระบายสีช่องเดือน — เดือนที่ถูกระบายสีให้ใส่ { "active": true } ของแถวนั้น
+11. ในแบบ 009 ตาราง Gantt ใช้การระบายสีช่องเดือน — เดือนที่ถูกระบายสีให้ใส่ { "active": true } ของแถวนั้น
    ${GANTT_RULES}
-11. ${SUBJOB_GROUP_RULE}`
+12. ${SUBJOB_GROUP_RULE}`
 }
 
 /* ---------- normalization of the model's JSON reply ---------- */
@@ -491,6 +509,7 @@ export function parseModelJson(text: string): ReportData {
     status: oneOf(bi.status, STATUSES, 'ใหม่'),
     approval: str(bi.approval),
     workNature: str(bi.workNature),
+    executionType: str(bi.executionType),
     area: str(bi.area),
     durationYears: durationYears(startYear, endYear),
     startYear,
@@ -527,6 +546,20 @@ export function parseModelJson(text: string): ReportData {
           disbursementByYear: yearAmounts(cat.disbursementByYear),
         }
       }).filter(c => c.name)
+    : []
+
+  const wq = (raw.workQuantity ?? {}) as Record<string, unknown>
+  const workQuantityItems: WorkQuantityItem[] = Array.isArray(wq.items)
+    ? (wq.items as unknown[]).map((it, i) => {
+        const item = (it ?? {}) as Record<string, unknown>
+        return {
+          no: num(item.no, i + 1),
+          name: str(item.name),
+          unit: str(item.unit),
+          totalQuantity: num(item.totalQuantity),
+          byYear: yearAmounts(item.byYear),
+        }
+      }).filter(it => it.name)
     : []
 
   const equipmentBlocks: EquipmentYear[] = Array.isArray(raw.equipment)
@@ -620,6 +653,7 @@ export function parseModelJson(text: string): ReportData {
     equipment,
     history: base.history,
     compareTable: base.compareTable,
+    workQuantity: { items: workQuantityItems, progressByYear: [] },
     procurements: procurements.length ? procurements : base.procurements,
   }
 }

@@ -1,5 +1,5 @@
 import type { ReportGroup, Report, ReportData } from './reportTypes'
-import { emptyHistoryData, emptyCompareTable } from './reportTypes'
+import { emptyHistoryData, emptyCompareTable, emptyWorkQuantity } from './reportTypes'
 
 const BASE = "/api/v1"
 const EXTRA_HEADERS = { "ngrok-skip-browser-warning": "true" }
@@ -34,17 +34,21 @@ async function del(path: string): Promise<void> {
   if (!res.ok) throw new Error(await res.text())
 }
 
-// Reports saved before the history/compareTable sections existed have no corresponding key in
-// their stored JSON — backfill on read so older reports don't crash those sections, instead of
-// migrating every row.
+// Reports saved before the history/compareTable/workQuantity sections existed have no
+// corresponding key in their stored JSON — backfill on read so older reports don't crash those
+// sections, instead of migrating every row.
 function withNewSections(report: Report): Report {
-  if (report.data.history && report.data.compareTable) return report
+  if (report.data.history && report.data.compareTable && report.data.workQuantity?.progressByYear) return report
   return {
     ...report,
     data: {
       ...report.data,
       history: report.data.history ?? emptyHistoryData(),
       compareTable: report.data.compareTable ?? emptyCompareTable(),
+      workQuantity: {
+        items: report.data.workQuantity?.items ?? [],
+        progressByYear: report.data.workQuantity?.progressByYear ?? [],
+      },
     },
   }
 }
