@@ -96,29 +96,88 @@ const td = (opts?: React.CSSProperties): React.CSSProperties => ({ border, paddi
 
 // ─── EditableCell ─────────────────────────────────────────────────────────────
 
+// Stable per-visual-column key used for Excel-style arrow navigation. cut_transfer/
+// under_budget deliberately omit fundType — the "รวม"-only column they render into
+// can be backed by a ผูกพัน or ลงทุน row depending on which one has data, but it's
+// still visually a single column, so the key must stay fundType-independent for
+// up/down navigation to land in the same column across rows.
+function dataColFor(field: EditField, fundType: string, year: number) {
+  if (field === "cut_transfer" || field === "under_budget") return `${year}|${field}`
+  return `${year}|${field}|${fundType}`
+}
+
+// Finds the next navigable cell from `dataCol` within `tr` (left/right — every
+// editable cell in the row, spanning all years) or in a sibling row (up/down —
+// walks past rows that have no editable cell in that exact column, e.g. a "—"
+// placeholder for cut_transfer/under_budget, until it finds one or runs out).
+function findNavTarget(tr: Element, dataCol: string, direction: "up" | "down" | "left" | "right"): HTMLElement | null {
+  if (direction === "left" || direction === "right") {
+    const cells = Array.from(tr.querySelectorAll<HTMLElement>("[data-col]"))
+    const idx = cells.findIndex((el) => el.getAttribute("data-col") === dataCol)
+    if (idx === -1) return null
+    return cells[direction === "left" ? idx - 1 : idx + 1] ?? null
+  }
+  let row: Element | null = direction === "up" ? tr.previousElementSibling : tr.nextElementSibling
+  while (row) {
+    const cell = row.querySelector<HTMLElement>(`[data-col="${dataCol}"]`)
+    if (cell) return cell
+    row = direction === "up" ? row.previousElementSibling : row.nextElementSibling
+  }
+  return null
+}
+
 function EditableCell({
   value, isPending, isEditing, editValue,
-  isUndo,
+  isUndo, dataCol,
   onStartEdit, onChange, onCommit, onCancel,
 }: {
   value: number; isPending: boolean; isEditing: boolean; editValue: string
-  isUndo?: boolean
+  isUndo?: boolean; dataCol: string
   onStartEdit: () => void; onChange: (v: string) => void; onCommit: () => void; onCancel: () => void
 }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (isEditing) inputRef.current?.select()
+  }, [isEditing])
+
+  // Commits the current value, then — once the row has re-rendered with the
+  // committed (and any forward-recalculated) values — clicks the next cell in
+  // `direction`, reusing its normal onStartEdit click path so navigation never
+  // needs its own copy of the "how does this cell open" logic.
+  function navigate(direction: "up" | "down" | "left" | "right") {
+    const tr = inputRef.current?.closest("tr")
+    onCommit()
+    if (!tr) return
+    setTimeout(() => {
+      findNavTarget(tr, dataCol, direction)?.click()
+    }, 0)
+  }
+
   if (isEditing) {
     return (
       <input
+        ref={inputRef}
         autoFocus
+        data-col={dataCol}
         value={editValue}
         onChange={(e) => onChange(e.target.value)}
         onBlur={onCommit}
-        onKeyDown={(e) => { if (e.key === "Enter") onCommit(); if (e.key === "Escape") onCancel() }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); navigate("down"); return }
+          if (e.key === "Escape") { onCancel(); return }
+          if (e.key === "ArrowUp") { e.preventDefault(); navigate("up"); return }
+          if (e.key === "ArrowDown") { e.preventDefault(); navigate("down"); return }
+          if (e.key === "ArrowLeft") { e.preventDefault(); navigate("left"); return }
+          if (e.key === "ArrowRight") { e.preventDefault(); navigate("right"); return }
+        }}
         style={{ width: 120, textAlign: "right", fontFamily: "monospace", fontSize: 12, border: "1.5px solid #3B82F6", borderRadius: 4, padding: "2px 6px", outline: "none" }}
       />
     )
   }
   return (
     <span
+      data-col={dataCol}
       onClick={onStartEdit}
       title="Click to edit"
       style={{
@@ -1099,6 +1158,7 @@ function ProjectEditor({ code }: { code: string }) {
           <EditableCell
             value={effVal} isPending={isPend} isEditing={isEd}
             isUndo={undoKeys.has(`${vKey}|${field}`)}
+            dataCol={dataColFor(field, fundType, year)}
             editValue={isEd ? editState!.value : ""}
             onStartEdit={() => {
               setPendingNew((prev) => {
@@ -1124,6 +1184,7 @@ function ProjectEditor({ code }: { code: string }) {
         <EditableCell
           value={effVal} isPending={isPend} isEditing={isEd}
           isUndo={undoKeys.has(`${key}|${field}`)}
+          dataCol={dataColFor(field, fundType, year)}
           editValue={isEd ? editState!.value : ""}
           onStartEdit={() => startEdit(key, field)}
           onChange={(v) => setEditState((s) => s ? { ...s, value: v } : s)}
@@ -1293,6 +1354,7 @@ function ProjectEditor({ code }: { code: string }) {
           <EditableCell
             value={effVal} isPending={isPend} isEditing={isEd}
             isUndo={undoKeys.has(`${vKey}|${field}`)}
+            dataCol={dataColFor(field, fundType, year)}
             editValue={isEd ? editState!.value : ""}
             onStartEdit={() => {
               setPendingNew((prev) => {
