@@ -292,23 +292,39 @@ needs_review ตามกติกาที่กำหนดไว้เท่�
    ในเทิร์นเดียวกันโดยไม่รอคำตอบ** — รอฉันตอบก่อนเสมอ เหมือนกติกาถามปีในข้อ 0
 7. ถ้าไฟล์ที่วางมาไม่มีบล็อกสรุปปิดท้าย section ให้เช็ค (บางไฟล์ตัดตอนมาแค่บางส่วน ไม่มีครบ) ให้ข้ามขั้นตอนนี้ไปเฉย ๆ ไม่ต้องรายงานอะไร
 
-## 4. สรุปจำนวนโครงการ (\`summary\`)
+## 4. สรุปจำนวน+ยอดโครงการ (\`summary\`)
 
-หลังสร้าง \`projects\` array เสร็จแล้ว ให้ **นับจาก \`projects\` array ที่คุณเพิ่งสร้างเองเท่านั้น**
-(นับจำนวน record ที่ \`project_type\` ตรงกับแต่ละค่า) **ห้ามอ่าน/คัดลอกตัวเลขสรุปจากที่ใดในไฟล์ต้นฉบับมาใส่เด็ดขาด**
-(เช่น แถว "รวม", ตัวเลขท้ายชีต, หรือความจำ) แม้ตัวเลขนั้นจะดูตรงกันก็ตาม — ต้องนับสดจากข้อมูลจริงที่แปลงได้เท่านั้น
-เพื่อให้ใช้ตรวจสอบไขว้กับ dashboard ของแอปได้
+หลังสร้าง \`projects\`/\`sub_jobs\`/\`budget_sources\` array เสร็จแล้ว ให้ **นับ/รวมยอดจาก array ที่คุณเพิ่งสร้างเองเท่านั้น**
+**ห้ามอ่าน/คัดลอกตัวเลขสรุปจากที่ใดในไฟล์ต้นฉบับมาใส่เด็ดขาด** (เช่น แถว "รวม", ตัวเลขท้ายชีต, หรือความจำ) แม้ตัวเลขนั้นจะดูตรงกันก็ตาม
+— ต้องนับ/รวมสดจากข้อมูลจริงที่แปลงได้เท่านั้น เพื่อให้ใช้ตรวจสอบไขว้กับ dashboard ของแอปได้
+
+**อย่าปล่อยให้ตัวเลขยอดรวมอยู่แค่ในตารางเช็คของข้อ 3.6 (ซึ่งเป็นแค่ข้อความในแชท หายไปเมื่อจบบทสนทนา) — ต้องใส่ยอดเดียวกันนั้นลงใน
+\`summary\` ของ JSON output ด้วยเสมอ** เพื่อให้ตัวเลขติดไปกับไฟล์ผลลัพธ์ ไม่ใช่แค่ diff ชั่วคราวที่เห็นตอนคุยกัน:
 
 \`\`\`json
 "summary": {
-  "by_type": {"Y": 0, "C": 0, "CC": 0, "CY": 0, "L": 0},
-  "grouped": {"Y_CY": 0, "C_CC": 0, "L": 0}
+  "by_type": {
+    "Y":  {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "C":  {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "CC": {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "CY": {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "L":  {"count": 0, "budget_committed": 0, "budget_invest": 0}
+  },
+  "grouped": {
+    "Y_CY": {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "C_CC": {"count": 0, "budget_committed": 0, "budget_invest": 0},
+    "L":    {"count": 0, "budget_committed": 0, "budget_invest": 0}
+  }
 }
 \`\`\`
 
-- \`by_type\`: จำนวนโครงการ (นับจาก \`projects\`) แยกตามค่า \`project_type\` แต่ละค่า
-- \`grouped\`: \`Y_CY\` = จำนวน Y + จำนวน CY รวมกัน, \`C_CC\` = จำนวน C + จำนวน CC รวมกัน, \`L\` = จำนวน L (เท่ากับ \`by_type.L\`)
-- ผลรวมของ \`by_type\` ทั้งหมดต้องเท่ากับ \`projects.length\` พอดี (เช็คตัวเองก่อนตอบ)
+- \`count\`: จำนวนโครงการ (นับจาก \`projects\`) แยกตามค่า \`project_type\` แต่ละค่า
+- \`budget_committed\`/\`budget_invest\`: ผลรวม \`budget\` ของฝั่งผูกพัน/ลงทุนตามลำดับ **จาก \`budget_sources\` เท่านั้น** (กติกาเดียวกับ
+  ข้อ 3.6 — ห้ามบวก \`sub_jobs\` ด้วย ไม่งั้นนับเงินก้อนเดียวกันซ้ำสอง) ของโครงการที่ \`project_type\` ตรงกับ key นั้น
+- \`grouped\`: \`Y_CY\` = ผลรวม Y + CY, \`C_CC\` = ผลรวม C + CC, \`L\` = เท่ากับ \`by_type.L\` ทุกฟิลด์ (\`count\`/\`budget_committed\`/\`budget_invest\`)
+- \`grouped\` ทั้ง 3 กลุ่มนี้ต้องมีค่าตรงกับตารางเช็คในข้อ 3.6 ข้อ 1 เป๊ะ (คนละที่ใส่ แต่คำนวณจากข้อมูลชุดเดียวกัน — ถ้าไม่ตรงกันเอง
+  แปลว่าคำนวณข้อใดข้อหนึ่งผิด ย้อนกลับไปแก้ก่อนตอบ)
+- ผลรวม \`count\` ใน \`by_type\` ทั้งหมดต้องเท่ากับ \`projects.length\` พอดี (เช็คตัวเองก่อนตอบ)
 
 ## 5. รูปแบบผลลัพธ์ที่ต้องการ (JSON เท่านั้น ไม่ต้องมีคำอธิบาย)
 
@@ -327,8 +343,18 @@ needs_review ตามกติกาที่กำหนดไว้เท่�
     {"row_key":1,"item_no":"...","reason":"..."}
   ],
   "summary": {
-    "by_type": {"Y":0,"C":0,"CC":0,"CY":0,"L":0},
-    "grouped": {"Y_CY":0,"C_CC":0,"L":0}
+    "by_type": {
+      "Y":  {"count":0,"budget_committed":0,"budget_invest":0},
+      "C":  {"count":0,"budget_committed":0,"budget_invest":0},
+      "CC": {"count":0,"budget_committed":0,"budget_invest":0},
+      "CY": {"count":0,"budget_committed":0,"budget_invest":0},
+      "L":  {"count":0,"budget_committed":0,"budget_invest":0}
+    },
+    "grouped": {
+      "Y_CY": {"count":0,"budget_committed":0,"budget_invest":0},
+      "C_CC": {"count":0,"budget_committed":0,"budget_invest":0},
+      "L":    {"count":0,"budget_committed":0,"budget_invest":0}
+    }
   }
 }
 \`\`\`
