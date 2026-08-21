@@ -1284,6 +1284,19 @@ function ProjectEditor({ code }: { code: string }) {
   }
 
   // One body row per name/source group
+  function deleteSubJobGroup(groupName: string) {
+    if (newSjNames.includes(groupName)) {
+      setNewSjNames(prev => prev.filter(n => n !== groupName))
+      setPendingNew(prev => {
+        const n = new Map(prev)
+        for (const k of [...n.keys()]) { if (k.startsWith(`sj-new|${groupName}|`)) n.delete(k) }
+        return n
+      })
+    } else {
+      setDeletedSjNames(prev => new Set([...prev, groupName]))
+    }
+  }
+
   function renderGroupRow(
     groupName: string,
     sortOrder: number | null | undefined,
@@ -1296,7 +1309,21 @@ function ProjectEditor({ code }: { code: string }) {
     )
     return (
       <tr key={groupName} style={{ background: "#fff" }}>
-        <td style={{ ...td(), fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1, width: 200, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>{groupName}</td>
+        <td style={{ ...td(), fontWeight: 500, position: "sticky", left: 0, background: "#fff", zIndex: 1, width: 200, maxWidth: 200, whiteSpace: "normal", wordBreak: "break-word" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6 }}>
+            <span>{groupName}</span>
+            {prefix === "sj" && (
+              <button
+                type="button"
+                onClick={() => deleteSubJobGroup(groupName)}
+                title="ลบงานย่อยนี้"
+                style={{ flexShrink: 0, width: 16, height: 16, lineHeight: "14px", textAlign: "center", fontSize: 12, color: "#9CA3AF", background: "transparent", border: "1px solid #E5E7EB", borderRadius: 4, cursor: "pointer", padding: 0 }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "#EF4444"; e.currentTarget.style.borderColor = "#FCA5A5"; e.currentTarget.style.background = "#FEF2F2" }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "#9CA3AF"; e.currentTarget.style.borderColor = "#E5E7EB"; e.currentTarget.style.background = "transparent" }}
+              >×</button>
+            )}
+          </div>
+        </td>
         {allYears.map(year => {
           const yd = years.find(y => y.year === year)
           const committed = yd?.committed ?? null
